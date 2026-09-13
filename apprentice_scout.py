@@ -34,7 +34,7 @@ import json
 import re
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 import requests
@@ -75,8 +75,9 @@ SEARCH_MAX_TRANSITION = 6           # career-changer roles in a /search reply
 MIN_SCORE = 6                       # main: early-career + tech/cyber + paid
 MIN_TRANS_SCORE = 5                 # career-changer: transition + tech/cyber + paid
 
-# Anti-repeat: remember this many recently-featured role keys.
-RECENT_MEMORY = 120
+# Anti-repeat: forget a featured role after this many days, so a role that's
+# still open can resurface (and old de-dupe keys / log lines don't pile up).
+SEEN_TTL_DAYS = 30
 
 # --- Claude script/caption writer (optional) -------------------------------
 USE_LLM = True
@@ -119,21 +120,55 @@ def log(msg: str) -> None:
         pass
 
 
+def _prune_role_keys(rk) -> dict:
+    """De-dupe memory as {role_key: 'YYYY-MM-DD'}. Migrates the legacy list form
+    (dateless — stamped today so it ages out over the TTL) and drops anything
+    older than SEEN_TTL_DAYS. Membership tests still work: `key in dict`."""
+    today = date.today()
+    if isinstance(rk, list):
+        rk = {k: today.isoformat() for k in rk}
+    cutoff = today - timedelta(days=SEEN_TTL_DAYS)
+    out: dict = {}
+    for k, d in (rk or {}).items():
+        try:
+            if date.fromisoformat(str(d)[:10]) >= cutoff:
+                out[k] = d
+        except ValueError:
+            out[k] = today.isoformat()  # unparseable date: keep, restamp
+    return out
+
+
 def load_seen() -> dict:
+    seen = {"role_keys": {}, "hook_recent": [], "tip_recent": []}
     if SEEN_FILE.exists():
         try:
-            return json.loads(SEEN_FILE.read_text(encoding="utf-8"))
+            seen = json.loads(SEEN_FILE.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             pass
-    return {"role_keys": [], "hook_recent": [], "tip_recent": []}
+    seen["role_keys"] = _prune_role_keys(seen.get("role_keys"))
+    return seen
 
 
 def save_seen(seen: dict) -> None:
-    seen["role_keys"] = seen.get("role_keys", [])[-RECENT_MEMORY:]
+    seen["role_keys"] = _prune_role_keys(seen.get("role_keys"))
     try:
         SEEN_FILE.write_text(json.dumps(seen, indent=2), encoding="utf-8")
     except OSError as e:
         log(f"WARN could not write seen cache: {e}")
+
+
+def _trim_log() -> None:
+    """Drop log lines older than SEEN_TTL_DAYS (each line starts with an ISO
+    timestamp). Keeps unparseable lines. No-op if the file is missing."""
+    if not LOG_FILE.exists():
+        return
+    cutoff = (date.today() - timedelta(days=SEEN_TTL_DAYS)).isoformat()
+    try:
+        kept = [ln for ln in LOG_FILE.read_text(encoding="utf-8").splitlines()
+                if ln[:10] >= cutoff or not (len(ln) >= 10 and ln[4] == "-" and ln[7] == "-")]
+        LOG_FILE.write_text("\n".join(kept) + ("\n" if kept else ""), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _day_seed(salt: str) -> int:
@@ -174,12 +209,19 @@ def scrape_all(location: str | None = None, results_per_query: int | None = None
     location = location or STATE or LOCATION
     rpq = results_per_query or RESULTS_PER_QUERY
 
+    # Google Jobs scopes by the words in the query, NOT the location param, so
+    # fold the state into its natural-language term when a scope is set.
+    scoped = bool(location) and location != LOCATION
+
     for q in SPEC.QUERIES:
+        gterm = q["google_search_term"]
+        if scoped:
+            gterm = f"{gterm} in {location}"
         try:
             df = scrape_jobs(
                 site_name=SPEC.SITES,
                 search_term=q["search_term"],
-                google_search_term=q["google_search_term"],
+                google_search_term=gterm,
                 location=location,
                 results_wanted=rpq,
                 hours_old=HOURS_OLD,
@@ -195,7 +237,11 @@ def scrape_all(location: str | None = None, results_per_query: int | None = None
             continue
 
         for _, row in df.iterrows():
-            url = str(row.get("job_url") or "").strip()
+            # Prefer the direct employer/ATS link (Indeed exposes it) over the
+            # board's own viewjob URL, so we send people to the real posting.
+            direct = str(row.get("job_url_direct") or "").strip()
+            board_url = str(row.get("job_url") or "").strip()
+            url = direct if direct.startswith("http") else board_url
             title = str(row.get("title") or "").strip()
             company = str(row.get("company") or "").strip()
             if not title or not company:
@@ -207,20 +253,46 @@ def scrape_all(location: str | None = None, results_per_query: int | None = None
 
             desc = row.get("description")
             posted = row.get("date_posted")
+            salary = _fmt_salary(row)
+            desc_text = "" if desc is None else str(desc)
+            # Fold salary into the scored text: LinkedIn rows have no description,
+            # so an explicit pay range is often the only "paid" signal available.
+            hay_extra = f"salary {salary} " if salary else ""
             roles.append({
                 "title": title,
                 "company": company,
                 "url": url,
+                "salary": salary,
                 "site": str(row.get("site") or "").strip(),
                 "location": str(row.get("location") or "").strip(),
                 "posted": None if posted is None or str(posted).lower() in ("nat", "nan", "none", "") else str(posted)[:10],
-                "desc": "" if desc is None else str(desc),
+                "desc": hay_extra + desc_text,
                 "query_tag": q["tag"],
             })
 
     log(f"scraped {len(roles)} unique roles across {len(SPEC.QUERIES)} queries / "
         f"{SPEC.SITES} / location={location}")
     return roles
+
+
+def _fmt_salary(row) -> str:
+    """Compact pay range from a jobspy row (min/max/interval/currency), or ''.
+    Guards against NaN/None/zero so blank salaries don't render as '$0'."""
+    def num(x):
+        try:
+            x = float(x)
+        except (TypeError, ValueError):
+            return None
+        return None if x != x or x <= 0 else x  # x != x catches NaN
+    lo, hi = num(row.get("min_amount")), num(row.get("max_amount"))
+    if not lo and not hi:
+        return ""
+    cur = "$" if str(row.get("currency") or "USD").upper() == "USD" else f"{row.get('currency')} "
+    per = {"yearly": "/yr", "hourly": "/hr", "monthly": "/mo",
+           "weekly": "/wk", "daily": "/day"}.get(str(row.get("interval") or "").strip(), "")
+    if lo and hi and hi != lo:
+        return f"{cur}{lo:,.0f}–{hi:,.0f}{per}"
+    return f"{cur}{(lo or hi):,.0f}{per}"
 
 
 def _kw_score(text: str, table: dict) -> tuple[int, list[str]]:
@@ -401,10 +473,11 @@ def _role_lines(picks: list[dict], tag_key: str) -> list[str]:
     for i, p in enumerate(picks, 1):
         posted = f" · posted {esc(p['posted'])}" if p.get("posted") else ""
         loc = f" · {esc(p['location'])}" if p.get("location") else ""
+        sal = f" · 💰 {esc(p['salary'])}" if p.get("salary") else ""
         out.append(
             f"{i}. <a href=\"{esc(p['url'])}\"><b>{esc(p['title'])}</b></a> — {esc(p['company'])}"
         )
-        out.append(f"     {p[tag_key]}{loc}{posted}")
+        out.append(f"     {p[tag_key]}{loc}{sal}{posted}")
     return out
 
 
@@ -490,6 +563,7 @@ def _gather() -> tuple[list[dict], list[dict], dict]:
 
 
 def main() -> int:
+    _trim_log()
     picks, transition, seen = _gather()
     if not picks and not transition:
         log("No qualifying roles this run.")
@@ -506,8 +580,10 @@ def main() -> int:
     if send_message(msg):
         log(f"SENT {len(picks)} main + {len(transition)} transition: "
             f"{[p['company'] for p in combined]}")
-        keys = seen.get("role_keys", [])
-        keys.extend(role_key(p["title"], p["company"]) for p in combined)
+        today = date.today().isoformat()
+        keys = seen.get("role_keys", {})
+        for p in combined:
+            keys[role_key(p["title"], p["company"])] = today
         seen["role_keys"] = keys
         seen.setdefault("hook_recent", []).append(hook)
         seen["hook_recent"] = seen["hook_recent"][-4:]
@@ -706,12 +782,17 @@ def serve_once() -> int:
         return 1
 
     handled, last = 0, offset
+    done: set[tuple[str, str]] = set()  # collapse duplicate commands in one batch
     for u in updates:
         last = max(last, u["update_id"] + 1)
         msg = u.get("message") or {}
         text = msg.get("text")
         chat = msg.get("chat", {})
         if text and chat.get("id") is not None:
+            key = (str(chat["id"]), text.strip().lower())
+            if key in done:  # tapped /search NY three times → answer once
+                continue
+            done.add(key)
             _handle_command(str(chat["id"]), text)
             handled += 1
     if last != offset:

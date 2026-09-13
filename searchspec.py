@@ -78,11 +78,16 @@ QUERIES = [
 ]
 
 # Boards to scrape. Order doesn't matter; each is tried independently.
-# google + linkedin are the reliable engines. indeed and zip_recruiter are
-# omitted by default — both aggressively block scrapers (Indeed returned nothing;
-# ZipRecruiter 403s every request). Add them back here to try; failures are
-# swallowed per-query so they can't break a run.
-SITES = ["google", "linkedin"]
+#   indeed  — most reliable, incl. from datacenter/Actions IPs; scopes by state
+#             (LinkedIn/Google don't reliably), and returns descriptions + salary
+#             + a job_url_direct that points at the EMPLOYER/ATS (Workday,
+#             SmartRecruiters, Greenhouse, ADP, Oracle HCM…), not a third party.
+#   google  — good when it answers, but frequently returns 0 from cloud IPs.
+#   linkedin — often blocked from datacenter IPs; title-only (no descriptions).
+# ZipRecruiter is omitted (403s every request). Failures are swallowed per-query
+# so a blocked board can't break a run. Indeed is a job board, not a reposter —
+# and we link through to its job_url_direct (the real employer/ATS posting).
+SITES = ["indeed", "google", "linkedin"]
 
 # ---------------------------------------------------------------------------
 # SCORING KEYWORDS (all matched case-insensitively against the title, and the
