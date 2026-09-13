@@ -33,6 +33,7 @@ import hashlib
 import json
 import re
 import sys
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -63,9 +64,12 @@ LOCATION = "United States"          # default jobspy location (nationwide)
 STATE = ""                          # set to a full state name to scope the scrape;
                                     # usually set at runtime via `--state XX`. Empty = nationwide.
 HOURS_OLD = 168                     # 168h = last 7 days ("within the last week")
-RESULTS_PER_QUERY = 25              # per board, per query pass
+RESULTS_PER_QUERY = 25              # per board, per query pass (scheduled digest)
+SEARCH_RESULTS_PER_QUERY = 12       # lighter pass for on-demand /search replies
 MAX_PICKS = 8                       # main early-career roles in the digest
 MAX_TRANSITION = 5                  # career-changer roles in the digest
+SEARCH_MAX_PICKS = 10               # main roles in an on-demand /search reply
+SEARCH_MAX_TRANSITION = 6           # career-changer roles in a /search reply
 
 # Minimum combined score to keep a role in each section.
 MIN_SCORE = 6                       # main: early-career + tech/cyber + paid
@@ -152,10 +156,13 @@ def role_key(title: str, company: str) -> str:
 # Scraping (jobspy) + filtering / scoring
 # ---------------------------------------------------------------------------
 
-def scrape_all() -> list[dict]:
+def scrape_all(location: str | None = None, results_per_query: int | None = None) -> list[dict]:
     """Run every query in searchspec across the configured boards. Each pass is
     isolated so one board/query failing (rate limit, network) never kills the
-    run. Returns a de-duplicated list of raw role dicts."""
+    run. Returns a de-duplicated list of raw role dicts.
+
+    location / results_per_query override the module defaults — used by the
+    on-demand /search command to scope a live search to a single state."""
     try:
         from jobspy import scrape_jobs
     except ImportError:
@@ -164,7 +171,8 @@ def scrape_all() -> list[dict]:
 
     seen_urls: set[str] = set()
     roles: list[dict] = []
-    location = STATE or LOCATION
+    location = location or STATE or LOCATION
+    rpq = results_per_query or RESULTS_PER_QUERY
 
     for q in SPEC.QUERIES:
         try:
@@ -173,7 +181,7 @@ def scrape_all() -> list[dict]:
                 search_term=q["search_term"],
                 google_search_term=q["google_search_term"],
                 location=location,
-                results_wanted=RESULTS_PER_QUERY,
+                results_wanted=rpq,
                 hours_old=HOURS_OLD,
                 linkedin_fetch_description=False,
                 country_indeed="USA",
@@ -303,7 +311,9 @@ def _transition_tag(trans_hits: list[str], tech_score: int) -> str:
     return f"{domain} · {kind}"
 
 
-def rank_and_dedupe(roles: list[dict], recent_keys: list[str]) -> tuple[list[dict], list[dict]]:
+def rank_and_dedupe(roles: list[dict], recent_keys: list[str],
+                    max_main: int = MAX_PICKS,
+                    max_trans: int = MAX_TRANSITION) -> tuple[list[dict], list[dict]]:
     """Return (main_picks, transition_picks). A role appears in at most one list;
     the main early-career list takes precedence over the career-changer list."""
     classified = [r for r in (classify_role(x) for x in roles) if r]
@@ -311,13 +321,13 @@ def rank_and_dedupe(roles: list[dict], recent_keys: list[str]) -> tuple[list[dic
 
     main = [r for r in fresh if r.get("is_main")]
     main.sort(key=lambda r: r["main_score"], reverse=True)
-    main = main[:MAX_PICKS]
+    main = main[:max_main]
     main_keys = {role_key(r["title"], r["company"]) for r in main}
 
     trans = [r for r in fresh if r.get("is_trans")
              and role_key(r["title"], r["company"]) not in main_keys]
     trans.sort(key=lambda r: r["trans_score"], reverse=True)
-    trans = trans[:MAX_TRANSITION]
+    trans = trans[:max_trans]
     return main, trans
 
 
@@ -440,6 +450,9 @@ def build_digest(picks: list[dict], transition: list[dict], hook: str,
         "💡 <b>Teach-your-audience tip</b>",
         f"   {esc(apply_tip)}",
         "",
+        "💬 <b>Search live in the bot</b> — text me <code>/search NY</code> (or just "
+        "<code>NY</code>) any time for current roles in a state. <code>/help</code> for more.",
+        "",
         "🗺️ <b>Search by state (tap — LinkedIn, last 7 days)</b>",
     ]
     for label, url in SPEC.state_search_links():
@@ -546,6 +559,167 @@ def print_chat_id() -> int:
         return 1
 
 
+# ---------------------------------------------------------------------------
+# On-demand /search command — a cloud poller (responder.yml, every ~5 min) lets
+# you text the bot "/search NY" and get live roles for that state back any time,
+# not just in the scheduled digest. Same pattern as the GoWild Matcher bot.
+# ---------------------------------------------------------------------------
+
+POLL_OFFSET_FILE = BASE_DIR / "poll_offset.json"
+
+HELP_TEXT = (
+    "🎬 <b>Apprentice Scout — search commands</b>\n"
+    "• <code>/search NY</code> — LIVE search of paid apprenticeships, rotational "
+    "&amp; early-career cyber/tech roles in a state (posted last 7 days), plus a "
+    "career-changer set.\n"
+    "• <code>/search</code> — nationwide.\n"
+    "• Shortcut: just send a 2-letter state code, e.g. <code>TX</code>.\n"
+    "• <code>/states</code> — list valid state codes.\n"
+    "• <code>/help</code> — this message.\n\n"
+    "<i>A live search scrapes the job boards, so a reply takes ~a minute.</i>"
+)
+
+
+def _chunk_lines(lines: list[str], limit: int = 3800) -> list[str]:
+    """Pack lines into messages under Telegram's 4096-char cap."""
+    out: list[str] = []
+    buf: list[str] = []
+    size = 0
+    for ln in lines:
+        add = len(ln) + 1
+        if buf and size + add > limit:
+            out.append("\n".join(buf))
+            buf, size = [], 0
+        buf.append(ln)
+        size += add
+    if buf:
+        out.append("\n".join(buf))
+    return out
+
+
+def _reply(chat_id: str, text: str) -> None:
+    try:
+        requests.post(_tg_api("sendMessage"),
+                      json={"chat_id": chat_id, "text": text, "parse_mode": "HTML",
+                            "disable_web_page_preview": True}, timeout=25).raise_for_status()
+    except Exception as e:  # noqa: BLE001
+        log(f"WARN reply failed: {e}")
+
+
+def build_search_reply(location_label: str, location: str) -> list[str]:
+    """Live-scrape roles scoped to `location` and format a chunked reply. Ignores
+    the de-dupe cache so a search always returns the current best matches."""
+    roles = scrape_all(location=location, results_per_query=SEARCH_RESULTS_PER_QUERY)
+    picks, transition = rank_and_dedupe(roles, [], SEARCH_MAX_PICKS, SEARCH_MAX_TRANSITION)
+    if not picks and not transition:
+        return [f"🔎 <b>{esc(location_label)}</b> — no fresh qualifying roles right "
+                "now (boards may be rate-limiting, or nothing new in the last 7 days). "
+                "Try again shortly, or a different state."]
+    lines = [f"🔎 <b>Apprentice Scout — {esc(location_label)}</b>",
+             "<i>Posted in the last 7 days · straight from the job boards.</i>"]
+    if picks:
+        lines.append("")
+        lines.append("🗂️ <b>Apprenticeships · rotational · new-grad</b>")
+        lines.extend(_role_lines(picks, "tag"))
+    if transition:
+        lines.append("")
+        lines.append("🔁 <b>For career changers — switching into tech/cyber</b>")
+        lines.extend(_role_lines(transition, "trans_tag"))
+    lines.append("")
+    lines.append("<i>Confirm each role on its link before you apply or film.</i>")
+    return _chunk_lines(lines)
+
+
+def _handle_command(chat_id: str, text: str) -> None:
+    t = text.strip()
+    low = t.lower()
+    if low in ("/start", "/help", "help", "start"):
+        _reply(chat_id, HELP_TEXT)
+        return
+    if low in ("/states", "states"):
+        codes = " ".join(sorted(SPEC.US_STATES))
+        _reply(chat_id, f"🗺️ <b>State codes</b>\n{esc(codes)}\n\n"
+                        "Search one with <code>/search TX</code> or just <code>TX</code>.")
+        return
+
+    # /search [state]  OR  a bare 2-letter state code as a shortcut.
+    is_bare_state = len(t) == 2 and t.isalpha() and t.upper() in SPEC.US_STATES
+    if low.startswith("/search") or is_bare_state:
+        if is_bare_state:
+            arg = t
+        else:
+            parts = t.split(maxsplit=1)
+            arg = parts[1] if len(parts) > 1 else ""
+        if not arg:  # nationwide
+            _reply(chat_id, "🔎 Searching <b>nationwide</b>, one moment…")
+            for block in build_search_reply("United States", LOCATION):
+                _reply(chat_id, block)
+                time.sleep(0.4)
+            return
+        full = SPEC.resolve_state(arg)
+        if not full:
+            _reply(chat_id, f"🤔 I don't know state <b>{esc(arg)}</b>. Use a 2-letter "
+                            "code (e.g. TX) or full name, or send <code>/states</code>.")
+            return
+        _reply(chat_id, f"🔎 Searching <b>{esc(full)}</b>, one moment… (live scrape, ~a minute)")
+        for block in build_search_reply(full, full):
+            _reply(chat_id, block)
+            time.sleep(0.4)
+        return
+
+    _reply(chat_id, "Send <code>/search NY</code> (or just <code>NY</code>) for live "
+                    "roles in a state, or <code>/help</code>.")
+
+
+def _load_offset() -> int:
+    if POLL_OFFSET_FILE.exists():
+        try:
+            return int(json.loads(POLL_OFFSET_FILE.read_text(encoding="utf-8")).get("offset", 0))
+        except (json.JSONDecodeError, OSError, ValueError):
+            pass
+    return 0
+
+
+def _save_offset(offset: int) -> None:
+    try:
+        POLL_OFFSET_FILE.write_text(json.dumps({"offset": offset}), encoding="utf-8")
+    except OSError as e:
+        log(f"WARN could not write poll offset: {e}")
+
+
+def serve_once() -> int:
+    """One poll cycle: fetch new updates since the stored offset, answer any
+    commands, persist the new offset. Meant to run on a schedule (responder.yml,
+    every few minutes) so the bot answers even when your PC is off."""
+    if "CHANGE-ME" in TELEGRAM_BOT_TOKEN:
+        log("ERROR token still placeholder.")
+        return 1
+    offset = _load_offset()
+    try:
+        r = requests.get(_tg_api("getUpdates"),
+                         params={"offset": offset, "timeout": 0, "allowed_updates": '["message"]'},
+                         timeout=30)
+        r.raise_for_status()
+        updates = r.json().get("result", [])
+    except Exception as e:  # noqa: BLE001
+        log(f"WARN getUpdates failed: {e}")
+        return 1
+
+    handled, last = 0, offset
+    for u in updates:
+        last = max(last, u["update_id"] + 1)
+        msg = u.get("message") or {}
+        text = msg.get("text")
+        chat = msg.get("chat", {})
+        if text and chat.get("id") is not None:
+            _handle_command(str(chat["id"]), text)
+            handled += 1
+    if last != offset:
+        _save_offset(last)
+    log(f"serve_once: {len(updates)} update(s), {handled} handled, offset -> {last}")
+    return 0
+
+
 def _apply_state_arg() -> None:
     """Handle `--state XX` / `--state "New York"` — scope the live scrape to one
     state. Unknown values are rejected with the list of valid options."""
@@ -567,6 +741,8 @@ def _apply_state_arg() -> None:
 if __name__ == "__main__":
     if "--chatid" in sys.argv:
         sys.exit(print_chat_id())
+    if "--serve-once" in sys.argv:
+        sys.exit(serve_once())
     _apply_state_arg()
     if "--preview" in sys.argv or "--dry-run" in sys.argv:
         sys.exit(preview())

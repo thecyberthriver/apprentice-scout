@@ -1,0 +1,43 @@
+name: Apprentice Scout responder
+
+# Answers on-demand /search commands texted to the bot. Polls Telegram every ~5
+# minutes so the bot replies even when your PC is off (GitHub's minimum cron
+# interval is 5 min). Scheduled runs can be delayed under load — that's expected.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: apprentice-scout-responder
+  cancel-in-progress: false
+
+jobs:
+  respond:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+
+      - name: Restore poll offset
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4
+        with:
+          path: poll_offset.json
+          key: apprentice-offset-${{ github.run_id }}
+          restore-keys: |
+            apprentice-offset-
+
+      - name: Poll and answer commands
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: python apprentice_scout.py --serve-once
