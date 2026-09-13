@@ -24,6 +24,10 @@ and posts a Telegram digest you can screen-record and narrate.
 - **Search by state** — GoWild-style tappable per-state links (LinkedIn, last 7
   days) for the states in `TARGET_STATES`. Run `--state XX` to scope the actual
   scrape to one state (e.g. `--state TX` or `--state "New York"`).
+- **Interactive in-bot search** — text the bot `/search NY` (or just `NY`) any
+  time and it live-scrapes that state and replies with ranked roles. Also
+  `/states` and `/help`. Answered in the cloud by `responder.yml` (polls every
+  ~5 min via `--serve-once`), so it works even when your PC is off.
 - **A draft TikTok script + caption** (optional, via Claude Haiku).
 - **A posting tip** and a **teach-your-audience tip** so the video educates.
 - **Browse-more links** — pre-filtered live searches on hiring.cafe,
