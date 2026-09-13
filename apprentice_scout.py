@@ -62,10 +62,12 @@ TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "CHANGE-ME-chat-id")
 LOCATION = "United States"          # jobspy location string
 HOURS_OLD = 168                     # 168h = last 7 days ("within the last week")
 RESULTS_PER_QUERY = 25              # per board, per query pass
-MAX_PICKS = 8                       # how many roles to put in the digest
+MAX_PICKS = 8                       # main early-career roles in the digest
+MAX_TRANSITION = 5                  # career-changer roles in the digest
 
-# Minimum combined score (early-career + tech/cyber + paid) to keep a role.
-MIN_SCORE = 6
+# Minimum combined score to keep a role in each section.
+MIN_SCORE = 6                       # main: early-career + tech/cyber + paid
+MIN_TRANS_SCORE = 5                 # career-changer: transition + tech/cyber + paid
 
 # Anti-repeat: remember this many recently-featured role keys.
 RECENT_MEMORY = 120
@@ -218,9 +220,10 @@ def _kw_score(text: str, table: dict) -> tuple[int, list[str]]:
     return score, hits
 
 
-def score_role(role: dict) -> dict | None:
-    """Score a role for paid + early-career + cyber/tech fit. Returns the role
-    with 'score' and 'tag' filled in, or None if it doesn't qualify."""
+def classify_role(role: dict) -> dict | None:
+    """Score a role for tech/cyber fit and decide which section(s) it belongs to:
+    the main early-career list and/or the career-changer list. Enriches the role
+    in place and returns it, or None if it doesn't qualify for either."""
     hay = f" {role['title'].lower()} {role['desc'].lower()} "
 
     # Hard blocks first.
@@ -231,25 +234,34 @@ def score_role(role: dict) -> dict | None:
     if any(x in company_l for x in SPEC.EXCLUDE_COMPANIES):
         return None
 
-    early, early_hits = _kw_score(hay, SPEC.EARLY_CAREER)
     tech, _ = _kw_score(hay, SPEC.TECH_CYBER)
-    if early == 0 or tech == 0:
-        return None  # must be BOTH early-career AND tech/cyber
+    if tech == 0:
+        return None  # must be tech/cyber to matter at all
 
-    # Senior titles are out unless a strong early-career signal is present.
+    early, early_hits = _kw_score(hay, SPEC.EARLY_CAREER)
+    trans, trans_hits = _kw_score(hay, SPEC.TRANSITION_SIGNALS)
+    if early == 0 and trans == 0:
+        return None
+
+    # Senior titles are out unless a strong entry signal is present.
     title_l = role["title"].lower()
-    strong_early = any(k in title_l for k in
+    strong_entry = any(k in title_l for k in
                        ("apprentice", "rotational", "new grad", "new graduate",
                         "early career", "early talent", "graduate program",
-                        "development program", "entry level", "entry-level", "trainee"))
-    if any(b in f" {title_l} " for b in SPEC.SENIOR_BLOCK) and not strong_early:
+                        "development program", "entry level", "entry-level", "trainee",
+                        "help desk", "service desk", "it support", "skillbridge"))
+    if any(b in f" {title_l} " for b in SPEC.SENIOR_BLOCK) and not strong_entry:
         return None
 
     paid, _ = _kw_score(hay, SPEC.PAID_BOOST)
 
-    role["score"] = early + tech + paid
     role["tag"] = _display_tag(early_hits, tech)
-    if role["score"] < MIN_SCORE:
+    role["trans_tag"] = _transition_tag(trans_hits, tech)
+    role["main_score"] = early + tech + paid
+    role["trans_score"] = trans + tech + paid
+    role["is_main"] = early > 0 and role["main_score"] >= MIN_SCORE
+    role["is_trans"] = trans > 0 and role["trans_score"] >= MIN_TRANS_SCORE
+    if not (role["is_main"] or role["is_trans"]):
         return None
     return role
 
@@ -269,12 +281,40 @@ def _display_tag(early_hits: list[str], tech_score: int) -> str:
     return f"{domain} · {kind}"
 
 
-def rank_and_dedupe(roles: list[dict], recent_keys: list[str]) -> list[dict]:
-    scored = [r for r in (score_role(x) for x in roles) if r]
-    # Drop ones we've already featured in a past digest.
-    fresh = [r for r in scored if role_key(r["title"], r["company"]) not in recent_keys]
-    fresh.sort(key=lambda r: r["score"], reverse=True)
-    return fresh[:MAX_PICKS]
+def _transition_tag(trans_hits: list[str], tech_score: int) -> str:
+    domain = "🔐 Cyber" if tech_score >= 4 else "💻 Tech"
+    h = set(trans_hits)
+    if h & {"skillbridge", "veteran", "transitioning military", "military"}:
+        kind = "Veteran / SkillBridge"
+    elif h & {"returnship", "return to work", "relaunch", "career reentry"}:
+        kind = "Returnship / re-entry"
+    elif h & {"help desk", "service desk", "it support", "technical support"}:
+        kind = "Help-desk on-ramp"
+    elif h & {"no experience", "no prior experience", "willing to train",
+              "we will train", "we'll train", "train you", "on-the-job training",
+              "no degree", "without a degree", "degree not required"}:
+        kind = "No-degree / will-train"
+    else:
+        kind = "Career-changer friendly"
+    return f"{domain} · {kind}"
+
+
+def rank_and_dedupe(roles: list[dict], recent_keys: list[str]) -> tuple[list[dict], list[dict]]:
+    """Return (main_picks, transition_picks). A role appears in at most one list;
+    the main early-career list takes precedence over the career-changer list."""
+    classified = [r for r in (classify_role(x) for x in roles) if r]
+    fresh = [r for r in classified if role_key(r["title"], r["company"]) not in recent_keys]
+
+    main = [r for r in fresh if r.get("is_main")]
+    main.sort(key=lambda r: r["main_score"], reverse=True)
+    main = main[:MAX_PICKS]
+    main_keys = {role_key(r["title"], r["company"]) for r in main}
+
+    trans = [r for r in fresh if r.get("is_trans")
+             and role_key(r["title"], r["company"]) not in main_keys]
+    trans.sort(key=lambda r: r["trans_score"], reverse=True)
+    trans = trans[:MAX_TRANSITION]
+    return main, trans
 
 
 # ---------------------------------------------------------------------------
@@ -342,26 +382,40 @@ def send_message(text: str) -> bool:
         return False
 
 
-def build_digest(picks: list[dict], hook: str, cap_tip: str, apply_tip: str,
-                 script: dict | None) -> str:
+def _role_lines(picks: list[dict], tag_key: str) -> list[str]:
+    out: list[str] = []
+    for i, p in enumerate(picks, 1):
+        posted = f" · posted {esc(p['posted'])}" if p.get("posted") else ""
+        loc = f" · {esc(p['location'])}" if p.get("location") else ""
+        out.append(
+            f"{i}. <a href=\"{esc(p['url'])}\"><b>{esc(p['title'])}</b></a> — {esc(p['company'])}"
+        )
+        out.append(f"     {p[tag_key]}{loc}{posted}")
+    return out
+
+
+def build_digest(picks: list[dict], transition: list[dict], hook: str,
+                 cap_tip: str, apply_tip: str, script: dict | None) -> str:
     today = date.today().strftime("%a %b %d")
-    n = len(picks)
+    n = len(picks) + len(transition)
+    top = picks[0]["company"] if picks else (transition[0]["company"] if transition else "A top company")
     lines = [
         "🎬 <b>Paid Apprenticeships &amp; Early-Career Cyber/Tech — TikTok brief</b>",
         f"📅 {esc(today)} · <b>{n}</b> role(s) posted in the last 7 days · straight from the job boards",
         "",
         "🎥 <b>Video hook</b>",
-        f"   <i>{esc(hook.format(n=n, top=(picks[0]['company'] if picks else 'A top company')))}</i>",
-        "",
-        "🗂️ <b>The roles (screen-record this list)</b>",
+        f"   <i>{esc(hook.format(n=n, top=top))}</i>",
     ]
-    for i, p in enumerate(picks, 1):
-        posted = f" · posted {esc(p['posted'])}" if p.get("posted") else ""
-        loc = f" · {esc(p['location'])}" if p.get("location") else ""
-        lines.append(
-            f"{i}. <a href=\"{esc(p['url'])}\"><b>{esc(p['title'])}</b></a> — {esc(p['company'])}"
-        )
-        lines.append(f"     {p['tag']}{loc}{posted}")
+    if picks:
+        lines.append("")
+        lines.append("🗂️ <b>Apprenticeships · rotational · new-grad (screen-record this)</b>")
+        lines.extend(_role_lines(picks, "tag"))
+
+    if transition:
+        lines.append("")
+        lines.append("🔁 <b>For career changers — switching into tech/cyber</b>")
+        lines.append("   <i>No CS degree / coming from another field — lead a video with these.</i>")
+        lines.extend(_role_lines(transition, "trans_tag"))
 
     if script and (script.get("hook") or script.get("script") or script.get("caption")):
         lines.append("")
@@ -406,16 +460,16 @@ def build_empty_message() -> str:
 # Main / preview / chatid
 # ---------------------------------------------------------------------------
 
-def _gather() -> tuple[list[dict], dict]:
+def _gather() -> tuple[list[dict], list[dict], dict]:
     seen = load_seen()
     roles = scrape_all()
-    picks = rank_and_dedupe(roles, seen.get("role_keys", []))
-    return picks, seen
+    picks, transition = rank_and_dedupe(roles, seen.get("role_keys", []))
+    return picks, transition, seen
 
 
 def main() -> int:
-    picks, seen = _gather()
-    if not picks:
+    picks, transition, seen = _gather()
+    if not picks and not transition:
         log("No qualifying roles this run.")
         send_message(build_empty_message())
         return 0
@@ -423,13 +477,15 @@ def main() -> int:
     hook = rotate_pick(SPEC.VIDEO_HOOKS, seen.get("hook_recent", []), "hook")
     cap_tip = rotate_pick(SPEC.CAPTION_TIPS, [], "captip")
     apply_tip = rotate_pick(SPEC.APPLY_TIPS, seen.get("tip_recent", []), "applytip")
-    script = draft_script(picks, len(picks))
+    combined = picks + transition
+    script = draft_script(combined, len(combined))
 
-    msg = build_digest(picks, hook, cap_tip, apply_tip, script)
+    msg = build_digest(picks, transition, hook, cap_tip, apply_tip, script)
     if send_message(msg):
-        log(f"SENT {len(picks)} roles: {[p['company'] for p in picks]}")
+        log(f"SENT {len(picks)} main + {len(transition)} transition: "
+            f"{[p['company'] for p in combined]}")
         keys = seen.get("role_keys", [])
-        keys.extend(role_key(p["title"], p["company"]) for p in picks)
+        keys.extend(role_key(p["title"], p["company"]) for p in combined)
         seen["role_keys"] = keys
         seen.setdefault("hook_recent", []).append(hook)
         seen["hook_recent"] = seen["hook_recent"][-4:]
@@ -445,14 +501,14 @@ def preview() -> int:
     """Scrape + rank and print to console — no Telegram, no de-dupe write."""
     seen = load_seen()
     roles = scrape_all()
-    picks = rank_and_dedupe(roles, [])  # ignore de-dupe in preview
-    if not picks:
+    picks, transition = rank_and_dedupe(roles, [])  # ignore de-dupe in preview
+    if not picks and not transition:
         print("No qualifying roles found this run.")
         return 0
     hook = rotate_pick(SPEC.VIDEO_HOOKS, [], "hook")
     cap_tip = rotate_pick(SPEC.CAPTION_TIPS, [], "captip")
     apply_tip = rotate_pick(SPEC.APPLY_TIPS, [], "applytip")
-    text = build_digest(picks, hook, cap_tip, apply_tip, None)
+    text = build_digest(picks, transition, hook, cap_tip, apply_tip, None)
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     print(text)

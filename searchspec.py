@@ -57,6 +57,22 @@ QUERIES = [
         "search_term": "new grad software engineer OR early career technology analyst",
         "google_search_term": "new graduate early career software engineer jobs posted this week",
     },
+    # --- Career transitioners (switching INTO tech/cyber from another field) ---
+    {
+        "tag": "transition-cyber",
+        "search_term": "cybersecurity career change OR no experience OR entry level SOC analyst",
+        "google_search_term": "cybersecurity jobs for career changers no experience posted this week",
+    },
+    {
+        "tag": "transition-tech",
+        "search_term": "IT support career change OR help desk entry level OR service desk",
+        "google_search_term": "entry level IT help desk career change no degree jobs posted this week",
+    },
+    {
+        "tag": "transition-vets",
+        "search_term": "SkillBridge cybersecurity OR veterans cyber OR returnship technology",
+        "google_search_term": "veteran SkillBridge returnship cybersecurity technology jobs posted this week",
+    },
 ]
 
 # Boards to scrape. Order doesn't matter; each is tried independently.
@@ -101,6 +117,21 @@ TECH_CYBER = {
 # absence of the word "paid" is NOT disqualifying — only explicit unpaid is.
 PAID_BOOST = {"paid": 3, "salary": 2, "$": 2, "compensation": 1, "stipend": 1}
 UNPAID_BLOCK = ["unpaid", "volunteer", "no pay", "non-paid", "for college credit only"]
+
+# Career-transitioner signals — roles friendly to people switching INTO tech/cyber
+# from another field (not fresh college grads). A role lands in the "career
+# changers" section when it hits at least one of these AND a tech/cyber keyword.
+TRANSITION_SIGNALS = {
+    "career change": 6, "career changer": 6, "career transition": 6,
+    "career pivot": 6, "career switch": 6, "changing careers": 6, "second career": 5,
+    "no experience": 5, "no prior experience": 5, "willing to train": 5,
+    "we will train": 5, "we'll train": 5, "train you": 4, "on-the-job training": 4,
+    "no degree": 4, "without a degree": 4, "degree not required": 5,
+    "transferable skills": 4, "non-traditional": 3, "bootcamp": 4, "self-taught": 3,
+    "returnship": 6, "return to work": 5, "relaunch": 3, "career reentry": 5,
+    "skillbridge": 6, "veteran": 4, "transitioning military": 6, "military": 3,
+    "help desk": 3, "service desk": 3, "it support": 3, "technical support": 2,
+}
 
 # Third-party reposters / aggregators to EXCLUDE — the user wants roles posted
 # by the actual employer, not scraped-and-relisted by a middleman. Matched as a
