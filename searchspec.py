@@ -247,6 +247,26 @@ def state_search_links(states: list[str] | None = None) -> list[tuple[str, str]]
     return [lk for a in states if (lk := state_link(a))]
 
 
+def place_links(place: str) -> list[tuple[str, str]]:
+    """(label, url) tappable searches that open STRAIGHT to filtered roles for a
+    place — a state OR a city ('Austin', 'New York, NY') — on each real board,
+    early-career cyber/tech, last 7 days. Like the GoWild bot's one-tap deep
+    links: instant, no scraping, never rate-limited. `place` is free text; a
+    2-letter code or state name is expanded to the full state name."""
+    loc = US_STATES.get(place.strip().upper(), place.strip())
+    kw = _STATE_LINK_KEYWORDS
+    return [
+        ("Indeed — opens the filtered results",
+         "https://www.indeed.com/jobs?q=" + quote(kw) + "&l=" + quote(loc) + "&fromage=7"),
+        ("LinkedIn — last 7 days",
+         "https://www.linkedin.com/jobs/search/?keywords=" + quote(kw)
+         + "&location=" + quote(loc) + "&f_TPR=r604800"),
+        ("Google Jobs",
+         "https://www.google.com/search?ibp=htl;jobs&q="
+         + quote(f"{kw} jobs in {loc} posted this week")),
+    ]
+
+
 def resolve_state(arg: str) -> str | None:
     """Map a CLI --state value (abbreviation or full name) to a full state name
     usable as a jobspy location, or None if unrecognized."""

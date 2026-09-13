@@ -187,6 +187,25 @@ def role_key(title: str, company: str) -> str:
     return hashlib.md5(norm.encode()).hexdigest()[:12]
 
 
+_FULL_TO_ABBR = {full.upper(): abbr for abbr, full in SPEC.US_STATES.items()}
+
+
+def _in_state(loc: str, full_name: str) -> bool:
+    """True if a role's location string is actually in `full_name` (a state).
+    Boards return a ~50mi metro radius, so a 'New York' search otherwise leaks
+    NJ/CT. Matches the 2-letter code as a comma-token (e.g. 'Oyster Bay, NY, US')
+    or the full state name. Empty/remote locations are excluded — a state search
+    means 'based in that state'. ponytail: full-name match can catch a border
+    city like 'Washington, DC' on a WA search; abbrev-token match is primary."""
+    if not loc:
+        return False
+    up = loc.upper()
+    abbr = _FULL_TO_ABBR.get(full_name.upper(), "")
+    if abbr and re.search(rf"(?:^|,)\s*{abbr}\b", up):
+        return True
+    return full_name.upper() in up
+
+
 # ---------------------------------------------------------------------------
 # Scraping (jobspy) + filtering / scoring
 # ---------------------------------------------------------------------------
@@ -225,6 +244,7 @@ def scrape_all(location: str | None = None, results_per_query: int | None = None
                 location=location,
                 results_wanted=rpq,
                 hours_old=HOURS_OLD,
+                distance=25 if scoped else 50,  # tighter radius on a state search
                 linkedin_fetch_description=False,
                 country_indeed="USA",
                 verbose=0,
@@ -269,6 +289,14 @@ def scrape_all(location: str | None = None, results_per_query: int | None = None
                 "desc": hay_extra + desc_text,
                 "query_tag": q["tag"],
             })
+
+    # A state search must return roles actually IN that state — boards pull a
+    # ~50mi metro radius, so 'New York' otherwise leaks NJ/CT roles. Only applied
+    # for whole states; a city search relies on the tighter distance above.
+    if scoped and location.upper() in _FULL_TO_ABBR:
+        before = len(roles)
+        roles = [r for r in roles if _in_state(r["location"], location)]
+        log(f"state filter {location}: kept {len(roles)}/{before} in-state roles")
 
     log(f"scraped {len(roles)} unique roles across {len(SPEC.QUERIES)} queries / "
         f"{SPEC.SITES} / location={location}")
@@ -645,14 +673,16 @@ POLL_OFFSET_FILE = BASE_DIR / "poll_offset.json"
 
 HELP_TEXT = (
     "🎬 <b>Apprentice Scout — search commands</b>\n"
-    "• <code>/search NY</code> — LIVE search of paid apprenticeships, rotational "
-    "&amp; early-career cyber/tech roles in a state (posted last 7 days), plus a "
-    "career-changer set.\n"
+    "• <code>/search NY</code> — a <b>state</b>. Instant tap-through links to the "
+    "filtered results, then a live list of roles.\n"
+    "• <code>/search Austin</code> or <code>/search Austin, TX</code> — a "
+    "<b>city</b>.\n"
     "• <code>/search</code> — nationwide.\n"
     "• Shortcut: just send a 2-letter state code, e.g. <code>TX</code>.\n"
     "• <code>/states</code> — list valid state codes.\n"
     "• <code>/help</code> — this message.\n\n"
-    "<i>A live search scrapes the job boards, so a reply takes ~a minute.</i>"
+    "<i>Tap a link to jump straight to the roles; the live list follows in a few "
+    "seconds.</i>"
 )
 
 
@@ -688,9 +718,9 @@ def build_search_reply(location_label: str, location: str) -> list[str]:
     roles = scrape_all(location=location, results_per_query=SEARCH_RESULTS_PER_QUERY)
     picks, transition = rank_and_dedupe(roles, [], SEARCH_MAX_PICKS, SEARCH_MAX_TRANSITION)
     if not picks and not transition:
-        return [f"🔎 <b>{esc(location_label)}</b> — no fresh qualifying roles right "
-                "now (boards may be rate-limiting, or nothing new in the last 7 days). "
-                "Try again shortly, or a different state."]
+        return [f"🔎 <b>{esc(location_label)}</b> — the live list came back empty this "
+                "time (boards may be rate-limiting), but the tap links above go "
+                "straight to the current roles. Try them, or search again shortly."]
     lines = [f"🔎 <b>Apprentice Scout — {esc(location_label)}</b>",
              "<i>Posted in the last 7 days · straight from the job boards.</i>"]
     if picks:
@@ -706,6 +736,19 @@ def build_search_reply(location_label: str, location: str) -> list[str]:
     return _chunk_lines(lines)
 
 
+def _instant_links(label: str, place: str) -> str:
+    """GoWild-style instant reply: tappable links that open STRAIGHT to the
+    filtered roles for `place`, sent before the (slower) live scrape."""
+    lines = [f"🔎 <b>{esc(label)}</b> — tap to jump straight to the roles "
+             "(paid apprentice / entry-level / rotational / help-desk, last 7 days):",
+             ""]
+    for lbl, url in SPEC.place_links(place):
+        lines.append(f"   • <a href=\"{esc(url)}\">{esc(lbl)}</a>")
+    lines.append("")
+    lines.append("<i>Pulling a live list too — one moment…</i>")
+    return "\n".join(lines)
+
+
 def _handle_command(chat_id: str, text: str) -> None:
     t = text.strip()
     low = t.lower()
@@ -715,36 +758,34 @@ def _handle_command(chat_id: str, text: str) -> None:
     if low in ("/states", "states"):
         codes = " ".join(sorted(SPEC.US_STATES))
         _reply(chat_id, f"🗺️ <b>State codes</b>\n{esc(codes)}\n\n"
-                        "Search one with <code>/search TX</code> or just <code>TX</code>.")
+                        "Search one with <code>/search TX</code>, a city with "
+                        "<code>/search Austin</code>, or just <code>TX</code>.")
         return
 
-    # /search [state]  OR  a bare 2-letter state code as a shortcut.
+    # /search [place]  OR  a bare 2-letter state code as a shortcut. `place` is
+    # free text: a state code/name OR a city ("Austin", "New York, NY").
     is_bare_state = len(t) == 2 and t.isalpha() and t.upper() in SPEC.US_STATES
     if low.startswith("/search") or is_bare_state:
         if is_bare_state:
             arg = t
         else:
             parts = t.split(maxsplit=1)
-            arg = parts[1] if len(parts) > 1 else ""
+            arg = parts[1].strip() if len(parts) > 1 else ""
         if not arg:  # nationwide
-            _reply(chat_id, "🔎 Searching <b>nationwide</b>, one moment…")
-            for block in build_search_reply("United States", LOCATION):
-                _reply(chat_id, block)
-                time.sleep(0.4)
-            return
-        full = SPEC.resolve_state(arg)
-        if not full:
-            _reply(chat_id, f"🤔 I don't know state <b>{esc(arg)}</b>. Use a 2-letter "
-                            "code (e.g. TX) or full name, or send <code>/states</code>.")
-            return
-        _reply(chat_id, f"🔎 Searching <b>{esc(full)}</b>, one moment… (live scrape, ~a minute)")
-        for block in build_search_reply(full, full):
+            _reply(chat_id, _instant_links("United States", ""))
+            label, place = "United States", LOCATION
+        else:
+            full = SPEC.resolve_state(arg)          # state code/name → full name
+            label = full or arg                     # else use the city as typed
+            place = full or arg
+            _reply(chat_id, _instant_links(label, place))
+        for block in build_search_reply(label, place):
             _reply(chat_id, block)
             time.sleep(0.4)
         return
 
-    _reply(chat_id, "Send <code>/search NY</code> (or just <code>NY</code>) for live "
-                    "roles in a state, or <code>/help</code>.")
+    _reply(chat_id, "Send <code>/search NY</code> (a state), <code>/search Austin</code> "
+                    "(a city), or just <code>NY</code>. <code>/help</code> for more.")
 
 
 def _load_offset() -> int:
