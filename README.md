@@ -1,0 +1,73 @@
+# Apprentice Scout 🎬🔐
+
+A local Windows Python + Telegram agent that scouts **paid apprenticeships,
+rotational / leadership-development programs, and early-career cybersecurity &
+tech roles posted in the last 7 days** — and hands you a **film-ready TikTok
+brief** for each batch (job videos perform best on your account).
+
+Sibling to `fare_watcher`, `gowild_scout`, and `tech_networking_scout`, but this
+one does **live scraping**: every run it queries the job boards **directly**
+(LinkedIn + Google Jobs) — no aggregator / referral third party — filters to
+paid + early-career + cyber/tech, de-dupes against past runs, ranks the best,
+and posts a Telegram digest you can screen-record and narrate.
+
+## What each digest contains
+
+- **Headline count** — "N paid roles posted this week."
+- **A rotating TikTok video hook** — the opening line to say/overlay.
+- **The roles** — numbered, screen-recordable: title · company · tag
+  (🔐 Cyber / 💻 Tech · Apprenticeship / Rotational / New-grad / Entry-level) ·
+  location · date posted. Each links straight to the employer's posting.
+- **A draft TikTok script + caption** (optional, via Claude Haiku).
+- **A posting tip** and a **teach-your-audience tip** so the video educates.
+- **Browse-more links** — pre-filtered live searches on hiring.cafe,
+  apprenticeship.gov (official paid registered apprenticeships), and LinkedIn.
+
+## Why these sources (the "no third parties" rule)
+
+`python-jobspy` scrapes the boards themselves, so a hit is the employer's own
+posting — not a reposter. Companies that are themselves aggregators / staffing
+reposters (Jobright, Lensa, ZipRecruiter, Dice, "jobs via …", staffing firms,
+etc.) are filtered out by name — see `EXCLUDE_COMPANIES` in `searchspec.py`.
+
+hiring.cafe's search API is auth-gated (can't be scraped cleanly), and
+apprenticeship.gov is the official registry — both are included as **tappable
+pre-filtered links** at the bottom of the digest rather than scraped.
+
+## Setup
+
+```powershell
+pip install -r requirements.txt          # python-jobspy, requests, anthropic
+```
+
+1. **Create / choose a Telegram bot** (BotFather → `/newbot`) and copy the token.
+2. Put secrets in `secrets_local.py` (untracked):
+   - `TELEGRAM_BOT_TOKEN`
+   - Message the bot once, then run `python apprentice_scout.py --chatid` to get
+     your `TELEGRAM_CHAT_ID`; paste it in.
+   - Optional: `ANTHROPIC_API_KEY` to enable the AI-drafted TikTok script.
+3. Test:
+   ```powershell
+   python apprentice_scout.py --preview   # scrape + rank, print to console, no send
+   python apprentice_scout.py             # real Telegram send
+   ```
+4. Schedule it (Mon + Thu, 8 AM, silent):
+   ```powershell
+   .\register_task.ps1
+   ```
+
+## Tuning (all in `searchspec.py` / the CONFIG block of `apprentice_scout.py`)
+
+- `QUERIES` — the board queries (cyber/tech × apprentice/rotational/early-career).
+- `SITES` — boards to scrape (`google`, `linkedin`; add `indeed`/`zip_recruiter`
+  to try, though both block scrapers).
+- `EARLY_CAREER` / `TECH_CYBER` / `PAID_BOOST` — scoring keyword weights.
+- `EXCLUDE_COMPANIES` — aggregator/reposter blocklist.
+- `MIN_SCORE`, `MAX_PICKS`, `HOURS_OLD`, `LOCATION` — filter/scope knobs.
+- `VIDEO_HOOKS`, `CAPTION_TIPS`, `APPLY_TIPS`, `LINK_SOURCES` — content angles.
+
+## Honesty
+
+Reads public job-board listings only. It does **not** apply on your behalf and
+does **not** invent postings. Confirm each role on its link before you film or
+apply. Boards rate-limit scrapers; if a run comes back empty, re-run later.

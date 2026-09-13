@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+"""
+searchspec.py — what apprentice_scout.py looks for, how it scores, and the
+TikTok content angles it hands you.
+
+This is the "catalog" file (sibling to events.py in tech-networking-scout), but
+instead of curated events it defines the LIVE job-board queries and the keyword
+scoring used to keep only PAID apprenticeships, rotational programs, and
+early-career cyber/tech roles posted in the last week.
+
+Everything here is content-tuning — edit freely. The scraping/filtering engine
+lives in apprentice_scout.py and imports these names.
+"""
+
+from __future__ import annotations
+
+# ---------------------------------------------------------------------------
+# QUERIES — each dict is one scrape pass. We hit the job boards DIRECTLY
+# (LinkedIn, Google Jobs, ZipRecruiter) — no aggregator / referral third party.
+#
+#   search_term         : board-native keyword query (LinkedIn/ZipRecruiter)
+#   google_search_term  : natural-language query Google Jobs parses best
+#   tag                 : which content bucket a hit from this pass leans toward
+#
+# Google + LinkedIn are the reliable engines; ZipRecruiter is best-effort and
+# is allowed to fail without killing the run.
+# ---------------------------------------------------------------------------
+
+QUERIES = [
+    {
+        "tag": "cyber-apprentice",
+        "search_term": "cybersecurity apprentice OR apprenticeship",
+        "google_search_term": "paid cybersecurity apprenticeship entry level jobs posted this week",
+    },
+    {
+        "tag": "cyber-rotational",
+        "search_term": "cyber security rotational program OR leadership development program",
+        "google_search_term": "cybersecurity rotational program new grad jobs posted this week",
+    },
+    {
+        "tag": "cyber-early",
+        "search_term": "associate cybersecurity analyst OR SOC analyst new grad OR entry level",
+        "google_search_term": "entry level cybersecurity analyst new graduate jobs posted this week",
+    },
+    {
+        "tag": "tech-apprentice",
+        "search_term": "tech apprenticeship OR software apprentice OR IT apprentice",
+        "google_search_term": "paid tech software apprenticeship program jobs posted this week",
+    },
+    {
+        "tag": "tech-rotational",
+        "search_term": "technology rotational program OR technology development program OR TDP",
+        "google_search_term": "technology rotational leadership development program new grad jobs posted this week",
+    },
+    {
+        "tag": "tech-early",
+        "search_term": "new grad software engineer OR early career technology analyst",
+        "google_search_term": "new graduate early career software engineer jobs posted this week",
+    },
+]
+
+# Boards to scrape. Order doesn't matter; each is tried independently.
+# google + linkedin are the reliable engines. indeed and zip_recruiter are
+# omitted by default — both aggressively block scrapers (Indeed returned nothing;
+# ZipRecruiter 403s every request). Add them back here to try; failures are
+# swallowed per-query so they can't break a run.
+SITES = ["google", "linkedin"]
+
+# ---------------------------------------------------------------------------
+# SCORING KEYWORDS (all matched case-insensitively against the title, and the
+# description when available).
+# ---------------------------------------------------------------------------
+
+# Early-career signals — a role must hit at least one of these to qualify.
+# Weighted: apprenticeship/rotational (the user's explicit focus) score highest.
+EARLY_CAREER = {
+    "apprenticeship": 6, "apprentice": 6,
+    "rotational": 6, "rotation program": 6, "rotation": 3,
+    "leadership development program": 5, " ldp": 4, "development program": 4,
+    "new grad": 5, "new graduate": 5, "recent graduate": 4,
+    "early career": 5, "early talent": 5, "early-career": 5,
+    "entry level": 4, "entry-level": 4,
+    "graduate program": 5, "graduate engineer": 4, "graduate analyst": 4,
+    "class of 202": 4,  # "Class of 2026/2027" cohort postings
+    "trainee": 4, "junior": 3, "associate": 2, "intern": 2, "internship": 2,
+    "2026": 1, "2027": 1,
+}
+
+# Cyber/tech relevance — a role must hit at least one of these too.
+TECH_CYBER = {
+    "cybersecurity": 5, "cyber security": 5, "cyber": 4, "infosec": 4,
+    "information security": 5, "security": 3, "soc": 3, "grc": 3,
+    "penetration": 4, "incident response": 4, "threat": 3, "vulnerability": 3,
+    "software engineer": 3, "developer": 2, "cloud": 2, "network": 2,
+    "data engineer": 2, "data analyst": 2, "it ": 2, "technology": 2,
+    "devops": 3, "systems engineer": 2, "help desk": 1,
+}
+
+# "Paid" signals boost a role; unpaid signals disqualify it. Registered
+# apprenticeships and rotational/new-grad programs are paid by definition, so
+# absence of the word "paid" is NOT disqualifying — only explicit unpaid is.
+PAID_BOOST = {"paid": 3, "salary": 2, "$": 2, "compensation": 1, "stipend": 1}
+UNPAID_BLOCK = ["unpaid", "volunteer", "no pay", "non-paid", "for college credit only"]
+
+# Third-party reposters / aggregators to EXCLUDE — the user wants roles posted
+# by the actual employer, not scraped-and-relisted by a middleman. Matched as a
+# substring against the company name (lowercased).
+EXCLUDE_COMPANIES = [
+    "jobright", "lensa", "ziprecruiter", "get.it", "getit", "jobot",
+    "energy jobline", "talentify", "dice", "recruiting.com", "careerbuilder",
+    "adzuna", "jooble", "snagajob", "myworkdayjobs.com", "jobs via", "hiring.cafe",
+    "staffing", "recruiters", "recruitment", "talent acquisition partner",
+]
+
+# Seniority that disqualifies (unless an early-career signal is also present,
+# e.g. "New Grad — reports to Senior Manager").
+SENIOR_BLOCK = ["senior ", "sr.", "sr ", "staff ", "principal ", "lead ",
+                "manager", "director", "vp ", "head of", "architect",
+                "ii ", "iii ", " 3 ", "experienced"]
+
+# ---------------------------------------------------------------------------
+# TIKTOK CONTENT ANGLES — surfaced in the digest so each batch is film-ready.
+# {n} = number of roles, {top} = headline company/title.
+# ---------------------------------------------------------------------------
+
+VIDEO_HOOKS = [
+    "\"{n} PAID cybersecurity apprenticeships hiring RIGHT NOW (no experience needed)\" — screen-record the list.",
+    "\"POV: you didn't go to college but these {n} companies will PAY you to learn cyber\" — talk over the roll.",
+    "\"Stop paying for bootcamps. These {n} rotational programs pay YOU to train.\" — react to each one.",
+    "\"{top} is hiring early-career cyber — and nobody's talking about it.\" — deep-dive one role.",
+    "\"Save this: {n} entry-level tech + cyber roles posted THIS WEEK.\" — fast-cut carousel style.",
+    "\"How to break into cybersecurity in 2026 without a degree\" — use these {n} apprenticeships as proof.",
+]
+
+CAPTION_TIPS = [
+    "Pin a comment with the direct application links — TikTok buries links in captions.",
+    "Add on-screen text with each company name; viewers screenshot to apply later.",
+    "End with 'Follow for weekly paid cyber roles' — job videos convert best on consistency.",
+    "Hook in the first 2 seconds with the salary or 'no degree required' — then list.",
+    "Reply to a 'how do I get into cyber' comment with this video for reach.",
+    "Post between 6–9pm ET; career content peaks in the evening scroll.",
+]
+
+# ---------------------------------------------------------------------------
+# BROWSE-MORE SOURCES — tappable, always-current, pre-filtered searches shown at
+# the bottom of every digest. These are boards whose live search we DON'T scrape
+# (hiring.cafe is auth-gated; apprenticeship.gov is the official registry) — so
+# we point you straight at their filtered results instead. (label, url)
+# ---------------------------------------------------------------------------
+
+LINK_SOURCES = [
+    ("hiring.cafe — cybersecurity (indexes company career pages directly)",
+     "https://hiring.cafe/?q=cybersecurity"),
+    ("hiring.cafe — tech apprentice / new grad",
+     "https://hiring.cafe/?q=apprentice"),
+    ("apprenticeship.gov — official PAID registered cyber apprenticeships",
+     "https://www.apprenticeship.gov/apprenticeship-job-finder?searchType=JOB&keyword=cybersecurity"),
+    ("LinkedIn — 'cybersecurity apprentice', last 24h",
+     "https://www.linkedin.com/jobs/search/?keywords=cybersecurity%20apprentice&f_TPR=r86400"),
+]
+
+# Educational pillar so the video teaches, not just lists.
+APPLY_TIPS = [
+    "Apprenticeship ≠ internship: registered apprenticeships (apprenticeship.gov) are W-2 jobs with a wage schedule.",
+    "Rotational / LDP programs move you across teams in 6–24 months — great for figuring out your niche.",
+    "Apply within 48 hrs of posting; early-career reqs fill from the top of the pile.",
+    "No degree? Lead with certs (Security+, Google Cyber) and a home lab in your resume summary.",
+    "Tailor the resume title to the exact posting ('Associate SOC Analyst') to beat keyword filters.",
+    "Set a LinkedIn alert for 'apprentice cybersecurity' + 'past 24 hours' to catch these first.",
+]

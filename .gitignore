@@ -1,0 +1,4 @@
+secrets_local.py
+__pycache__/
+*.log
+seen.json
