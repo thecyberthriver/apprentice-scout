@@ -58,10 +58,13 @@ pip install -r requirements.txt          # python-jobspy, requests, anthropic
    python apprentice_scout.py                       # real Telegram send
    python apprentice_scout.py --preview --state TX  # scope the scrape to one state
    ```
-4. Schedule it (Mon + Thu, 8 AM, silent):
-   ```powershell
-   .\register_task.ps1
-   ```
+4. Schedule it — two options:
+   - **Cloud (default, recommended):** GitHub Actions runs it Mon + Thu at 12:00
+     UTC (8 AM ET) — see `.github/workflows/schedule.yml`. Set repo Secrets
+     `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (and optionally `ANTHROPIC_API_KEY`).
+     Trigger a test run from the Actions tab or `gh workflow run schedule.yml`.
+   - **Local (Windows):** `.\register_task.ps1` (Task Scheduler, silent via
+     pythonw). Don't run both — they de-dupe independently and would double-post.
 
 ## Tuning (all in `searchspec.py` / the CONFIG block of `apprentice_scout.py`)
 
