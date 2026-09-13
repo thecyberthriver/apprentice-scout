@@ -18,6 +18,12 @@ and posts a Telegram digest you can screen-record and narrate.
 - **The roles** — numbered, screen-recordable: title · company · tag
   (🔐 Cyber / 💻 Tech · Apprenticeship / Rotational / New-grad / Entry-level) ·
   location · date posted. Each links straight to the employer's posting.
+- **A "For career changers" section** — roles friendly to people switching INTO
+  tech/cyber from another field (no-degree / will-train, help-desk on-ramps,
+  veterans / SkillBridge, returnships), scored separately from the new-grad list.
+- **Search by state** — GoWild-style tappable per-state links (LinkedIn, last 7
+  days) for the states in `TARGET_STATES`. Run `--state XX` to scope the actual
+  scrape to one state (e.g. `--state TX` or `--state "New York"`).
 - **A draft TikTok script + caption** (optional, via Claude Haiku).
 - **A posting tip** and a **teach-your-audience tip** so the video educates.
 - **Browse-more links** — pre-filtered live searches on hiring.cafe,
@@ -48,8 +54,9 @@ pip install -r requirements.txt          # python-jobspy, requests, anthropic
    - Optional: `ANTHROPIC_API_KEY` to enable the AI-drafted TikTok script.
 3. Test:
    ```powershell
-   python apprentice_scout.py --preview   # scrape + rank, print to console, no send
-   python apprentice_scout.py             # real Telegram send
+   python apprentice_scout.py --preview            # scrape + rank, print, no send
+   python apprentice_scout.py                       # real Telegram send
+   python apprentice_scout.py --preview --state TX  # scope the scrape to one state
    ```
 4. Schedule it (Mon + Thu, 8 AM, silent):
    ```powershell
@@ -63,7 +70,10 @@ pip install -r requirements.txt          # python-jobspy, requests, anthropic
   to try, though both block scrapers).
 - `EARLY_CAREER` / `TECH_CYBER` / `PAID_BOOST` — scoring keyword weights.
 - `EXCLUDE_COMPANIES` — aggregator/reposter blocklist.
-- `MIN_SCORE`, `MAX_PICKS`, `HOURS_OLD`, `LOCATION` — filter/scope knobs.
+- `TRANSITION_SIGNALS` — keywords that flag career-changer-friendly roles.
+- `TARGET_STATES` — which states get tappable "Search by state" links.
+- `MIN_SCORE`, `MIN_TRANS_SCORE`, `MAX_PICKS`, `MAX_TRANSITION`, `HOURS_OLD`,
+  `LOCATION` — filter/scope knobs.
 - `VIDEO_HOOKS`, `CAPTION_TIPS`, `APPLY_TIPS`, `LINK_SOURCES` — content angles.
 
 ## Honesty
