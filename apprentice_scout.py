@@ -59,7 +59,9 @@ TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "CHANGE-ME:paste-token
 TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "CHANGE-ME-chat-id")
 
 # Search scope.
-LOCATION = "United States"          # jobspy location string
+LOCATION = "United States"          # default jobspy location (nationwide)
+STATE = ""                          # set to a full state name to scope the scrape;
+                                    # usually set at runtime via `--state XX`. Empty = nationwide.
 HOURS_OLD = 168                     # 168h = last 7 days ("within the last week")
 RESULTS_PER_QUERY = 25              # per board, per query pass
 MAX_PICKS = 8                       # main early-career roles in the digest
@@ -162,6 +164,7 @@ def scrape_all() -> list[dict]:
 
     seen_urls: set[str] = set()
     roles: list[dict] = []
+    location = STATE or LOCATION
 
     for q in SPEC.QUERIES:
         try:
@@ -169,7 +172,7 @@ def scrape_all() -> list[dict]:
                 site_name=SPEC.SITES,
                 search_term=q["search_term"],
                 google_search_term=q["google_search_term"],
-                location=LOCATION,
+                location=location,
                 results_wanted=RESULTS_PER_QUERY,
                 hours_old=HOURS_OLD,
                 linkedin_fetch_description=False,
@@ -207,7 +210,8 @@ def scrape_all() -> list[dict]:
                 "query_tag": q["tag"],
             })
 
-    log(f"scraped {len(roles)} unique roles across {len(SPEC.QUERIES)} queries / {SPEC.SITES}")
+    log(f"scraped {len(roles)} unique roles across {len(SPEC.QUERIES)} queries / "
+        f"{SPEC.SITES} / location={location}")
     return roles
 
 
@@ -399,9 +403,10 @@ def build_digest(picks: list[dict], transition: list[dict], hook: str,
     today = date.today().strftime("%a %b %d")
     n = len(picks) + len(transition)
     top = picks[0]["company"] if picks else (transition[0]["company"] if transition else "A top company")
+    scope = f" · 📍 {esc(STATE)}" if STATE else ""
     lines = [
         "🎬 <b>Paid Apprenticeships &amp; Early-Career Cyber/Tech — TikTok brief</b>",
-        f"📅 {esc(today)} · <b>{n}</b> role(s) posted in the last 7 days · straight from the job boards",
+        f"📅 {esc(today)} · <b>{n}</b> role(s) posted in the last 7 days · straight from the job boards{scope}",
         "",
         "🎥 <b>Video hook</b>",
         f"   <i>{esc(hook.format(n=n, top=top))}</i>",
@@ -435,8 +440,12 @@ def build_digest(picks: list[dict], transition: list[dict], hook: str,
         "💡 <b>Teach-your-audience tip</b>",
         f"   {esc(apply_tip)}",
         "",
-        "🔎 <b>Browse more (tap — always current)</b>",
+        "🗺️ <b>Search by state (tap — LinkedIn, last 7 days)</b>",
     ]
+    for label, url in SPEC.state_search_links():
+        lines.append(f"   • <a href=\"{esc(url)}\">{esc(label)}</a>")
+    lines.append("")
+    lines.append("🔎 <b>Browse more (tap — always current)</b>")
     for label, url in SPEC.LINK_SOURCES:
         lines.append(f"   • <a href=\"{esc(url)}\">{esc(label)}</a>")
     lines += [
@@ -537,9 +546,28 @@ def print_chat_id() -> int:
         return 1
 
 
+def _apply_state_arg() -> None:
+    """Handle `--state XX` / `--state "New York"` — scope the live scrape to one
+    state. Unknown values are rejected with the list of valid options."""
+    global STATE
+    if "--state" not in sys.argv:
+        return
+    i = sys.argv.index("--state")
+    if i + 1 >= len(sys.argv):
+        print("--state needs a value, e.g. --state TX  or  --state \"New York\"")
+        sys.exit(2)
+    resolved = SPEC.resolve_state(sys.argv[i + 1])
+    if not resolved:
+        print(f"Unknown state '{sys.argv[i + 1]}'. Use a 2-letter code (TX) or full name.")
+        sys.exit(2)
+    STATE = resolved
+    log(f"Scope: scraping only {STATE}")
+
+
 if __name__ == "__main__":
     if "--chatid" in sys.argv:
         sys.exit(print_chat_id())
+    _apply_state_arg()
     if "--preview" in sys.argv or "--dry-run" in sys.argv:
         sys.exit(preview())
     sys.exit(main())

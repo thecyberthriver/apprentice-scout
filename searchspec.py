@@ -14,6 +14,8 @@ lives in apprentice_scout.py and imports these names.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 # ---------------------------------------------------------------------------
 # QUERIES — each dict is one scrape pass. We hit the job boards DIRECTLY
 # (LinkedIn, Google Jobs, ZipRecruiter) — no aggregator / referral third party.
@@ -189,6 +191,70 @@ LINK_SOURCES = [
     ("LinkedIn — 'cybersecurity apprentice', last 24h",
      "https://www.linkedin.com/jobs/search/?keywords=cybersecurity%20apprentice&f_TPR=r86400"),
 ]
+
+# ---------------------------------------------------------------------------
+# SEARCH BY STATE — like the GoWild bot's one-tap per-hub links, each state gets
+# a tappable link that opens LinkedIn Jobs filtered to that state, cyber/tech
+# early-career keywords, POSTED IN THE LAST 7 DAYS (f_TPR=r604800). Also drives
+# the `--state XX` scrape override, which scopes the live scrape to one state.
+# ---------------------------------------------------------------------------
+
+US_STATES = {
+    "AL": "Alabama", "AK": "Alaska", "AZ": "Arizona", "AR": "Arkansas",
+    "CA": "California", "CO": "Colorado", "CT": "Connecticut", "DE": "Delaware",
+    "DC": "District of Columbia", "FL": "Florida", "GA": "Georgia", "HI": "Hawaii",
+    "ID": "Idaho", "IL": "Illinois", "IN": "Indiana", "IA": "Iowa", "KS": "Kansas",
+    "KY": "Kentucky", "LA": "Louisiana", "ME": "Maine", "MD": "Maryland",
+    "MA": "Massachusetts", "MI": "Michigan", "MN": "Minnesota", "MS": "Mississippi",
+    "MO": "Missouri", "MT": "Montana", "NE": "Nebraska", "NV": "Nevada",
+    "NH": "New Hampshire", "NJ": "New Jersey", "NM": "New Mexico", "NY": "New York",
+    "NC": "North Carolina", "ND": "North Dakota", "OH": "Ohio", "OK": "Oklahoma",
+    "OR": "Oregon", "PA": "Pennsylvania", "RI": "Rhode Island", "SC": "South Carolina",
+    "SD": "South Dakota", "TN": "Tennessee", "TX": "Texas", "UT": "Utah",
+    "VT": "Vermont", "VA": "Virginia", "WA": "Washington", "WV": "West Virginia",
+    "WI": "Wisconsin", "WY": "Wyoming",
+}
+
+# Which states show as tappable links in every digest (edit freely). Ordered by
+# the user's base (NY/NJ) then major cyber/tech + government-security hubs.
+TARGET_STATES = ["NY", "NJ", "TX", "VA", "MD", "CA", "GA", "FL", "NC", "WA"]
+
+# Keywords used for the per-state LinkedIn links (broad enough to catch
+# apprenticeships, early-career, AND career-changer roles).
+_STATE_LINK_KEYWORDS = "cybersecurity apprentice OR entry level OR rotational OR help desk"
+
+
+def state_link(abbr: str) -> tuple[str, str] | None:
+    """(label, url) for a single state's last-7-days LinkedIn search, or None if
+    the abbreviation is unknown."""
+    full = US_STATES.get(abbr.upper())
+    if not full:
+        return None
+    url = ("https://www.linkedin.com/jobs/search/?keywords="
+           + quote(_STATE_LINK_KEYWORDS)
+           + "&location=" + quote(full)
+           + "&f_TPR=r604800")  # past 7 days
+    return (f"{full} ({abbr.upper()})", url)
+
+
+def state_search_links(states: list[str] | None = None) -> list[tuple[str, str]]:
+    states = states or TARGET_STATES
+    return [lk for a in states if (lk := state_link(a))]
+
+
+def resolve_state(arg: str) -> str | None:
+    """Map a CLI --state value (abbreviation or full name) to a full state name
+    usable as a jobspy location, or None if unrecognized."""
+    if not arg:
+        return None
+    a = arg.strip()
+    if a.upper() in US_STATES:
+        return US_STATES[a.upper()]
+    for full in US_STATES.values():
+        if full.lower() == a.lower():
+            return full
+    return None
+
 
 # Educational pillar so the video teaches, not just lists.
 APPLY_TIPS = [
