@@ -1,0 +1,10 @@
+name = "apprentice-scout-bot"
+main = "worker.js"
+compatibility_date = "2024-11-01"
+workers_dev = true
+
+# All configured at deploy time as SECRETS (never committed):
+#   wrangler secret put TELEGRAM_BOT_TOKEN   bot token from BotFather
+#   wrangler secret put WEBHOOK_SECRET       random; matches setWebhook secret_token
+#   wrangler secret put OWNER_CHAT_ID        your Telegram user id (lock the bot to you)
+# Remove the OWNER_CHAT_ID secret to let the bot answer anyone.
