@@ -34,7 +34,7 @@ import json
 import re
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import requests
@@ -95,6 +95,8 @@ LLM_SYSTEM = ("You help a cybersecurity creator make short-form TikTok videos ab
 BASE_DIR = Path(__file__).resolve().parent
 SEEN_FILE = BASE_DIR / "seen.json"
 LOG_FILE = BASE_DIR / "apprentice_scout.log"
+INDEX_FILE = BASE_DIR / "roles_index.json"   # searchable role index for the webhook
+INDEX_MAX = 800                              # cap roles kept in the index
 
 # Load secrets (untracked) — overrides the CHANGE-ME placeholders above.
 try:
@@ -207,6 +209,21 @@ def _in_state(loc: str, full_name: str) -> bool:
     if abbr and re.search(rf"(?:^|,)\s*{abbr}\b", up):
         return True
     return full_name.upper() in up
+
+
+def _loc_state(loc: str) -> str:
+    """Best-effort 2-letter state code from a role location, or '' (remote/unknown)."""
+    if not loc:
+        return ""
+    up = loc.upper()
+    for ab in SPEC.US_STATES:
+        if re.search(rf"(?:^|,)\s*{ab}\b", up):
+            return ab
+    low = loc.lower()
+    for ab, full in SPEC.US_STATES.items():
+        if full.lower() in low:
+            return ab
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -680,6 +697,43 @@ def preview() -> int:
     return 0
 
 
+def build_index() -> int:
+    """Scrape jobspy + ATS and write a compact keyword/state-searchable role index
+    (roles_index.json) that the webhook Worker serves for instant /search — so a
+    'keyword + state' query returns real jobs with DIRECT links, no scrape at
+    request time. Run on a schedule (index.yml) and commit the file."""
+    _trim_log()
+    roles = scrape_all()  # jobspy (Indeed direct-URL / Google / LinkedIn), nationwide
+    try:
+        roles += ats.scrape_ats(days=ATS_DAYS, log=log)  # direct-from-employer ATS
+    except Exception as e:  # noqa: BLE001
+        log(f"WARN ATS scrape failed: {e}")
+
+    seen, items = set(), []
+    for r in roles:
+        u = r.get("url") or ""
+        k = u or role_key(r["title"], r["company"])
+        if k in seen:
+            continue
+        seen.add(k)
+        tag = r.get("tag") or ("🔐 Cyber" if SPEC.is_cyber_title(r["title"]) else "💻 Tech")
+        items.append({
+            "t": r["title"], "c": r["company"], "u": u,
+            "loc": r.get("location", ""), "st": _loc_state(r.get("location", "")),
+            "sal": r.get("salary", ""), "posted": r.get("posted") or "",
+            "src": r.get("site", ""), "tag": tag,
+            "kw": f"{r['title']} {r['company']} {tag} {r.get('query_tag','')}".lower(),
+        })
+    items.sort(key=lambda x: x["posted"], reverse=True)
+    items = items[:INDEX_MAX]
+    payload = {"generated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+               "count": len(items), "roles": items}
+    INDEX_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    log(f"INDEX wrote {len(items)} roles -> {INDEX_FILE.name}")
+    print(f"wrote {len(items)} roles to {INDEX_FILE}")
+    return 0
+
+
 def print_chat_id() -> int:
     if "CHANGE-ME" in TELEGRAM_BOT_TOKEN:
         print("Set TELEGRAM_BOT_TOKEN in secrets_local.py first.")
@@ -904,6 +958,8 @@ if __name__ == "__main__":
         sys.exit(print_chat_id())
     if "--serve-once" in sys.argv:
         sys.exit(serve_once())
+    if "--build-index" in sys.argv:
+        sys.exit(build_index())
     _apply_state_arg()
     if "--preview" in sys.argv or "--dry-run" in sys.argv:
         sys.exit(preview())

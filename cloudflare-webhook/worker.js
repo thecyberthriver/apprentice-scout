@@ -1,23 +1,23 @@
 /**
  * Apprentice Scout — Cloudflare Worker (instant Telegram webhook).
  *
- * Answers /search, /states and /help the moment you send them (no 5-min poll).
- * Telegram POSTs each update here; we reply immediately with tap-through links
- * that open STRAIGHT to the filtered roles — same GoWild-style deep-link pattern.
+ * /search <keyword> <state>  → returns REAL jobs with DIRECT links (straight to
+ * the posting), filtered by keyword + US state, answered instantly. It searches a
+ * pre-built role index (roles_index.json, refreshed by the index.yml GitHub
+ * Action from jobspy + employer/ATS scrapes) — a Worker can't scrape at request
+ * time, so it reads the index and filters. No third-party click-through.
  *
- * A Worker can't run python-jobspy, so the interactive reply is links-only (like
- * GoWild): tapping opens Indeed / LinkedIn / Google Jobs pre-filtered to the
- * place, early-career cyber/tech, last 7 days. The full scraped role list still
- * arrives in the twice-weekly digest (schedule.yml). Mirrors place_links() in
- * searchspec.py.
+ * Examples:
+ *   /search soc analyst NY        /search help desk texas
+ *   /search security engineer     /search NY            NY
  *
- * Bindings (set via wrangler / dashboard):
- *   - TELEGRAM_BOT_TOKEN  (secret)  bot token
- *   - WEBHOOK_SECRET      (secret)  matches Telegram's setWebhook secret_token
- *   - OWNER_CHAT_ID       (var)     optional; if set, only this chat is answered
+ * Bindings (secrets): TELEGRAM_BOT_TOKEN, WEBHOOK_SECRET, OWNER_CHAT_ID (optional).
  */
 
-// abbr -> full state name (mirrors US_STATES in searchspec.py)
+const INDEX_URL = "https://raw.githubusercontent.com/thecyberthriver/apprentice-scout/main/roles_index.json";
+const MAX_RESULTS = 12;
+
+// abbr -> full state name
 const STATES = {
   AL:"Alabama", AK:"Alaska", AZ:"Arizona", AR:"Arkansas", CA:"California",
   CO:"Colorado", CT:"Connecticut", DE:"Delaware", DC:"District of Columbia",
@@ -31,52 +31,120 @@ const STATES = {
   TN:"Tennessee", TX:"Texas", UT:"Utah", VT:"Vermont", VA:"Virginia",
   WA:"Washington", WV:"West Virginia", WI:"Wisconsin", WY:"Wyoming",
 };
+const FULL_TO_CODE = Object.fromEntries(
+  Object.entries(STATES).map(([ab, full]) => [full.toLowerCase(), ab]));
 
-// Broad enough to catch apprenticeships, early-career AND career-changer roles.
 const KW = "cybersecurity apprentice OR entry level OR rotational OR help desk";
-
 const esc = (s) => String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
 const q = (s) => encodeURIComponent(s);
 
-// Free text: a state code/name OR a city ("Austin", "New York, NY"). A 2-letter
-// code or state name is expanded to the full state name for the URLs.
+// In-isolate cache so most requests skip the fetch + parse.
+let CACHE = { t: 0, roles: [], generated: "" };
+async function getIndex() {
+  const now = Date.now();
+  if (now - CACHE.t < 30 * 60 * 1000 && CACHE.roles.length) return CACHE;
+  try {
+    const r = await fetch(INDEX_URL, { cf: { cacheTtl: 1800, cacheEverything: true } });
+    const j = await r.json();
+    if (Array.isArray(j.roles)) CACHE = { t: now, roles: j.roles, generated: j.generated || "" };
+  } catch (e) { /* keep stale index on failure */ }
+  return CACHE;
+}
+
+// Split "<keyword...> <state>" — trailing 2-letter code or full state name is the
+// state; the rest is the keyword. Either part may be empty.
+function parseQuery(arg) {
+  arg = (arg || "").trim();
+  if (!arg) return { kw: "", state: "" };
+  const toks = arg.split(/\s+/);
+  const last = toks[toks.length - 1].toUpperCase();
+  if (/^[A-Z]{2}$/.test(last) && STATES[last]) {
+    return { kw: toks.slice(0, -1).join(" ").toLowerCase(), state: last };
+  }
+  for (let n = Math.min(3, toks.length); n >= 1; n--) {
+    const code = FULL_TO_CODE[toks.slice(-n).join(" ").toLowerCase()];
+    if (code) return { kw: toks.slice(0, toks.length - n).join(" ").toLowerCase(), state: code };
+  }
+  return { kw: arg.toLowerCase(), state: "" };
+}
+
 function placeLinks(place) {
-  const loc = STATES[place.trim().toUpperCase()] || place.trim();
+  const loc = STATES[place.trim().toUpperCase()] || place.trim() || "United States";
   return [
-    ["Indeed — opens the filtered results",
-      `https://www.indeed.com/jobs?q=${q(KW)}&l=${q(loc)}&fromage=7`],
-    ["LinkedIn — last 7 days",
-      `https://www.linkedin.com/jobs/search/?keywords=${q(KW)}&location=${q(loc)}&f_TPR=r604800`],
-    ["Google Jobs",
-      `https://www.google.com/search?ibp=htl;jobs&q=${q(KW + " jobs in " + loc + " posted this week")}`],
-    ["hiring.cafe — company career pages & ATS",
-      `https://hiring.cafe/?q=${q(KW + " " + loc)}`],
+    ["Indeed", `https://www.indeed.com/jobs?q=${q(KW)}&l=${q(loc)}&fromage=7`],
+    ["LinkedIn", `https://www.linkedin.com/jobs/search/?keywords=${q(KW)}&location=${q(loc)}&f_TPR=r604800`],
+    ["Google Jobs", `https://www.google.com/search?ibp=htl;jobs&q=${q(KW + " jobs in " + loc + " posted this week")}`],
+    ["hiring.cafe — company career pages & ATS", `https://hiring.cafe/?q=${q(KW + " " + loc)}`],
   ];
 }
 
-function searchReply(label, place) {
+function roleLines(hits) {
+  const out = [];
+  hits.forEach((r, i) => {
+    const sal = r.sal ? ` · 💰 ${esc(r.sal)}` : "";
+    const loc = r.loc ? ` · ${esc(r.loc)}` : "";
+    const posted = r.posted ? ` · ${esc(r.posted)}` : "";
+    const src = r.src ? ` <i>(${esc(r.src)})</i>` : "";
+    out.push(`${i + 1}. <a href="${esc(r.u)}"><b>${esc(r.t)}</b></a> — ${esc(r.c)}${src}`);
+    out.push(`     ${esc(r.tag || "role")}${loc}${sal}${posted}`);
+  });
+  return out;
+}
+
+function chunk(lines, limit = 3800) {
+  const out = []; let buf = [], size = 0;
+  for (const ln of lines) {
+    const add = ln.length + 1;
+    if (buf.length && size + add > limit) { out.push(buf.join("\n")); buf = []; size = 0; }
+    buf.push(ln); size += add;
+  }
+  if (buf.length) out.push(buf.join("\n"));
+  return out;
+}
+
+async function searchBlocks(arg) {
+  const { kw, state } = parseQuery(arg);
+  const idx = await getIndex();
+  // Whole-word matching so "soc" doesn't match "asSOCiates".
+  const res = kw.split(/\s+/).filter(Boolean)
+    .map((t) => new RegExp("\\b" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i"));
+  const label = [kw.trim(), state ? STATES[state] : ""].filter(Boolean).join(" · ") || "everything";
+
+  if (!idx.roles.length) {
+    return [`🔎 <b>${esc(label)}</b> — the role index isn't available right now. ` +
+      "Try again shortly, or tap a live search:\n" +
+      placeLinks(state).map(([l, u]) => `   • <a href="${esc(u)}">${esc(l)}</a>`).join("\n")];
+  }
+
+  let hits = idx.roles.filter((r) =>
+    (!state || r.st === state) && res.every((re) => re.test(r.kw || "")));
+  hits = hits.slice(0, MAX_RESULTS);
+
+  if (!hits.length) {
+    return [`🔎 <b>${esc(label)}</b> — no matching roles in the current index ` +
+      `(${idx.roles.length} roles, updated ${esc((idx.generated || "").slice(0, 16))}). ` +
+      "Try a broader keyword or a different state, or tap a live search:\n" +
+      placeLinks(state).map(([l, u]) => `   • <a href="${esc(u)}">${esc(l)}</a>`).join("\n")];
+  }
+
   const lines = [
-    `🔎 <b>${esc(label)}</b> — tap to jump straight to the roles ` +
-      "(paid apprentice / entry-level / rotational / help-desk, last 7 days):",
+    `🔎 <b>${esc(label)}</b> — ${hits.length} role(s), tap the title to open the posting:`,
+    `<i>Direct from job boards &amp; employer career pages · index updated ${esc((idx.generated || "").slice(0, 16))} UTC.</i>`,
     "",
   ];
-  for (const [lbl, url] of placeLinks(place)) {
-    lines.push(`   • <a href="${esc(url)}">${esc(lbl)}</a>`);
-  }
-  lines.push("");
-  lines.push("<i>The full scraped list (with pay) lands in the twice-weekly digest.</i>");
-  return lines.join("\n");
+  lines.push(...roleLines(hits));
+  return chunk(lines);
 }
 
 const HELP =
-  "🎬 <b>Apprentice Scout — search commands</b>\n" +
-  "• <code>/search NY</code> — a <b>state</b>. Instant tap-through links to the filtered results.\n" +
-  "• <code>/search Austin</code> or <code>/search Austin, TX</code> — a <b>city</b>.\n" +
-  "• <code>/search</code> — nationwide.\n" +
-  "• Shortcut: just send a 2-letter state code, e.g. <code>TX</code>.\n" +
-  "• <code>/states</code> — list valid state codes.\n" +
-  "• <code>/help</code> — this message.\n\n" +
-  "<i>Tap a link to open the boards pre-filtered to your place — instant, no waiting.</i>";
+  "🎬 <b>Apprentice Scout — search</b>\n" +
+  "Type a keyword and/or a state; I return real roles with links straight to the posting.\n\n" +
+  "• <code>/search soc analyst NY</code> — keyword + state\n" +
+  "• <code>/search help desk texas</code>\n" +
+  "• <code>/search security engineer</code> — keyword, any state\n" +
+  "• <code>/search NY</code> or just <code>NY</code> — a whole state\n" +
+  "• <code>/states</code> — list state codes · <code>/help</code> — this message\n\n" +
+  "<i>Roles come from job boards + employer/ATS career pages, refreshed a few times a day.</i>";
 
 async function tgSend(env, chatId, text) {
   await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
@@ -96,52 +164,31 @@ async function handleUpdate(env, update) {
   const t = msg.text.trim();
   const low = t.toLowerCase();
 
-  if (["/start","/help","help","start"].includes(low)) {
+  if (["/start", "/help", "help", "start"].includes(low)) {
     await tgSend(env, chatId, HELP);
     return;
   }
-  if (["/states","states"].includes(low)) {
-    const codes = Object.keys(STATES).sort().join(" ");
-    await tgSend(env, chatId, `🗺️ <b>State codes</b>\n${esc(codes)}\n\n` +
-      "Search one with <code>/search TX</code>, a city with <code>/search Austin</code>, or just <code>TX</code>.");
+  if (["/states", "states"].includes(low)) {
+    await tgSend(env, chatId, `🗺️ <b>State codes</b>\n${esc(Object.keys(STATES).sort().join(" "))}\n\n` +
+      "e.g. <code>/search soc analyst TX</code>, or just <code>TX</code>.");
     return;
   }
 
-  // /search [place]  OR  a bare 2-letter state code as a shortcut.
   const isBareState = /^[a-zA-Z]{2}$/.test(t) && STATES[t.toUpperCase()];
   if (low.startsWith("/search") || isBareState) {
-    let arg;
-    if (isBareState) {
-      arg = t;
-    } else {
-      const i = t.indexOf(" ");
-      arg = i === -1 ? "" : t.slice(i + 1).trim();
-    }
-    let label, place;
-    if (!arg) {
-      label = "United States"; place = "United States";
-    } else {
-      const full = STATES[arg.toUpperCase()];
-      label = full || arg;     // else use the city as typed
-      place = full || arg;
-    }
-    await tgSend(env, chatId, searchReply(label, place));
+    const arg = isBareState ? t : t.replace(/^\/search\b/i, "").trim();
+    for (const block of await searchBlocks(arg)) await tgSend(env, chatId, block);
     return;
   }
 
-  await tgSend(env, chatId,
-    "Send <code>/search NY</code> (a state), <code>/search Austin</code> (a city), " +
-    "or just <code>NY</code>. <code>/help</code> for more.");
+  // Bare text with no command: treat as a keyword(+state) search.
+  for (const block of await searchBlocks(t)) await tgSend(env, chatId, block);
 }
 
 export default {
   async fetch(request, env, ctx) {
-    if (request.method === "GET") {
-      return new Response("Apprentice Scout webhook is up.", { status: 200 });
-    }
-    if (request.method !== "POST") {
-      return new Response("method not allowed", { status: 405 });
-    }
+    if (request.method === "GET") return new Response("Apprentice Scout webhook is up.", { status: 200 });
+    if (request.method !== "POST") return new Response("method not allowed", { status: 405 });
     if (env.WEBHOOK_SECRET &&
         request.headers.get("X-Telegram-Bot-Api-Secret-Token") !== env.WEBHOOK_SECRET) {
       return new Response("forbidden", { status: 401 });
@@ -149,7 +196,6 @@ export default {
     let update;
     try { update = await request.json(); }
     catch { return new Response("bad request", { status: 400 }); }
-
     ctx.waitUntil(handleUpdate(env, update).catch((e) => console.log("handle error", e)));
     return new Response("ok", { status: 200 });
   },
