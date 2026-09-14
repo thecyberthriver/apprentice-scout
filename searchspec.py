@@ -362,15 +362,23 @@ def is_cyber_title(title: str) -> bool:
 # ---------------------------------------------------------------------------
 
 GREENHOUSE_BOARDS = [
-    ("cloudflare", "Cloudflare"), ("datadog", "Datadog"), ("gitlab", "GitLab"),
-    ("okta", "Okta"), ("huntress", "Huntress"), ("elastic", "Elastic"),
-    ("zscaler", "Zscaler"), ("recordedfuture", "Recorded Future"),
-    ("abnormalsecurity", "Abnormal Security"), ("expel", "Expel"),
-    ("dragos", "Dragos"), ("cybereason", "Cybereason"), ("netskope", "Netskope"),
-    ("fastly", "Fastly"), ("twilio", "Twilio"), ("databricks", "Databricks"),
+    # Security / cyber-focused employers
+    ("cloudflare", "Cloudflare"), ("datadog", "Datadog"), ("okta", "Okta"),
+    ("huntress", "Huntress"), ("elastic", "Elastic"), ("zscaler", "Zscaler"),
+    ("recordedfuture", "Recorded Future"), ("abnormalsecurity", "Abnormal Security"),
+    ("expel", "Expel"), ("dragos", "Dragos"), ("cybereason", "Cybereason"),
+    ("netskope", "Netskope"), ("tanium", "Tanium"), ("bugcrowd", "Bugcrowd"),
+    ("knowbe4", "KnowBe4"), ("nozominetworks", "Nozomi Networks"),
+    ("censys", "Censys"), ("tailscale", "Tailscale"),
+    # Tech / IT employers (IT, cloud, SRE, support, data roles)
+    ("gitlab", "GitLab"), ("fastly", "Fastly"), ("twilio", "Twilio"),
+    ("databricks", "Databricks"), ("mongodb", "MongoDB"), ("vercel", "Vercel"),
     ("stripe", "Stripe"), ("coinbase", "Coinbase"), ("robinhood", "Robinhood"),
-    ("affirm", "Affirm"), ("reddit", "Reddit"), ("airbnb", "Airbnb"),
-    ("lyft", "Lyft"),
+    ("affirm", "Affirm"), ("brex", "Brex"), ("sofi", "SoFi"),
+    ("reddit", "Reddit"), ("airbnb", "Airbnb"), ("lyft", "Lyft"),
+    ("roblox", "Roblox"), ("discord", "Discord"), ("figma", "Figma"),
+    ("asana", "Asana"), ("gusto", "Gusto"), ("instacart", "Instacart"),
+    ("pinterest", "Pinterest"),
 ]
 
 LEVER_BOARDS = [

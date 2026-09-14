@@ -65,8 +65,8 @@ LOCATION = "United States"          # default jobspy location (nationwide)
 STATE = ""                          # set to a full state name to scope the scrape;
                                     # usually set at runtime via `--state XX`. Empty = nationwide.
 HOURS_OLD = 168                     # 168h = last 7 days ("within the last week")
-ATS_DAYS = 10                       # employer-ATS roles posted within N days (ats.py)
-ATS_MAX = 6                         # employer/ATS roles shown in the digest section
+ATS_DAYS = 14                       # employer-ATS roles posted within N days (ats.py)
+ATS_MAX = 12                        # employer/ATS roles shown in the digest section
 RESULTS_PER_QUERY = 25              # per board, per query pass (scheduled digest)
 SEARCH_RESULTS_PER_QUERY = 12       # lighter pass for on-demand /search replies
 MAX_PICKS = 8                       # main early-career roles in the digest
