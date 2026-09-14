@@ -484,21 +484,27 @@ def _tg_api(method: str) -> str:
 
 
 def send_message(text: str) -> bool:
+    """Send `text` to Telegram, split into <4096-char parts (Telegram's cap) on
+    line boundaries so HTML tags stay whole. Returns True only if every part sent."""
     if "CHANGE-ME" in TELEGRAM_BOT_TOKEN or "CHANGE-ME" in TELEGRAM_CHAT_ID:
         log("ERROR TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID still placeholder — edit secrets_local.py.")
         return False
-    try:
-        resp = requests.post(
-            _tg_api("sendMessage"),
-            json={"chat_id": TELEGRAM_CHAT_ID, "text": text, "parse_mode": "HTML",
-                  "disable_web_page_preview": True},
-            timeout=25,
-        )
-        resp.raise_for_status()
-        return True
-    except Exception as e:  # noqa: BLE001
-        log(f"WARN telegram send failed: {e}")
-        return False
+    ok = True
+    for part in _chunk_lines(text.split("\n")):
+        try:
+            resp = requests.post(
+                _tg_api("sendMessage"),
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": part, "parse_mode": "HTML",
+                      "disable_web_page_preview": True},
+                timeout=25,
+            )
+            resp.raise_for_status()
+        except Exception as e:  # noqa: BLE001
+            body = getattr(getattr(e, "response", None), "text", "")
+            log(f"WARN telegram send failed: {e} {body}")
+            ok = False
+        time.sleep(0.3)
+    return ok
 
 
 def _role_lines(picks: list[dict], tag_key: str) -> list[str]:
