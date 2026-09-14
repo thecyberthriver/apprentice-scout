@@ -4,15 +4,15 @@ name: Apprentice Scout responder
 # minutes so the bot replies even when your PC is off (GitHub's minimum cron
 # interval is 5 min). Scheduled runs can be delayed under load — that's expected.
 #
-# FALLBACK ONLY once the Cloudflare webhook (cloudflare-webhook/) is live: a bot
-# can't use a webhook and getUpdates at the same time, so while the webhook is set
-# this poller's getUpdates just 409s harmlessly. After deploying the webhook,
-# comment out the `schedule:` cron below to stop the wasted 5-min runs; re-enable
-# it (and run `set_webhook.py --delete`) to fall back to polling.
+# FALLBACK ONLY. The Cloudflare webhook (cloudflare-webhook/) is LIVE, and a bot
+# can't use a webhook and getUpdates at the same time, so the 5-min cron is
+# DISABLED (it would just 409 every run). To fall back to polling: run
+# `set_webhook.py --delete`, then un-comment the `schedule:` block below.
+# Left as workflow_dispatch-only so you can still trigger a manual poll if needed.
 
 on:
-  schedule:
-    - cron: "*/5 * * * *"
+  # schedule:
+  #   - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 permissions:
