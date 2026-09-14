@@ -49,6 +49,8 @@ function placeLinks(place) {
       `https://www.linkedin.com/jobs/search/?keywords=${q(KW)}&location=${q(loc)}&f_TPR=r604800`],
     ["Google Jobs",
       `https://www.google.com/search?ibp=htl;jobs&q=${q(KW + " jobs in " + loc + " posted this week")}`],
+    ["hiring.cafe — company career pages & ATS",
+      `https://hiring.cafe/?q=${q(KW + " " + loc)}`],
   ];
 }
 

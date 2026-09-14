@@ -40,6 +40,7 @@ from pathlib import Path
 import requests
 
 import searchspec as SPEC
+import ats
 
 # Windows consoles default to cp1252 and choke on emoji / em-dashes. Force
 # UTF-8 so --preview and logging never crash. Telegram gets clean UTF-8 via JSON.
@@ -64,6 +65,8 @@ LOCATION = "United States"          # default jobspy location (nationwide)
 STATE = ""                          # set to a full state name to scope the scrape;
                                     # usually set at runtime via `--state XX`. Empty = nationwide.
 HOURS_OLD = 168                     # 168h = last 7 days ("within the last week")
+ATS_DAYS = 10                       # employer-ATS roles posted within N days (ats.py)
+ATS_MAX = 6                         # employer/ATS roles shown in the digest section
 RESULTS_PER_QUERY = 25              # per board, per query pass (scheduled digest)
 SEARCH_RESULTS_PER_QUERY = 12       # lighter pass for on-demand /search replies
 MAX_PICKS = 8                       # main early-career roles in the digest
@@ -336,6 +339,8 @@ def classify_role(role: dict) -> dict | None:
     """Score a role for tech/cyber fit and decide which section(s) it belongs to:
     the main early-career list and/or the career-changer list. Enriches the role
     in place and returns it, or None if it doesn't qualify for either."""
+    if role.get("preclassified"):   # ATS roles arrive title-vetted + scored
+        return role
     hay = f" {role['title'].lower()} {role['desc'].lower()} "
 
     # Hard blocks first.
@@ -509,8 +514,8 @@ def _role_lines(picks: list[dict], tag_key: str) -> list[str]:
     return out
 
 
-def build_digest(picks: list[dict], transition: list[dict], hook: str,
-                 cap_tip: str, apply_tip: str, script: dict | None) -> str:
+def build_digest(picks: list[dict], transition: list[dict], ats_roles: list[dict],
+                 hook: str, cap_tip: str, apply_tip: str, script: dict | None) -> str:
     today = date.today().strftime("%a %b %d")
     n = len(picks) + len(transition)
     top = picks[0]["company"] if picks else (transition[0]["company"] if transition else "A top company")
@@ -532,6 +537,12 @@ def build_digest(picks: list[dict], transition: list[dict], hook: str,
         lines.append("🔁 <b>For career changers — switching into tech/cyber</b>")
         lines.append("   <i>No CS degree / coming from another field — lead a video with these.</i>")
         lines.extend(_role_lines(transition, "trans_tag"))
+
+    if ats_roles:
+        lines.append("")
+        lines.append("🏢 <b>Straight from employer career pages (ATS — no middleman)</b>")
+        lines.append("   <i>Entry-to-mid cyber &amp; IT roles posted directly by the company.</i>")
+        lines.extend(_role_lines(ats_roles, "tag"))
 
     if script and (script.get("hook") or script.get("script") or script.get("caption")):
         lines.append("")
@@ -590,10 +601,32 @@ def _gather() -> tuple[list[dict], list[dict], dict]:
     return picks, transition, seen
 
 
+def gather_ats(recent_keys) -> list[dict]:
+    """Fresh entry/mid cyber-IT roles pulled straight from employer ATS boards
+    (Greenhouse/Lever). State-scoped when STATE is set, de-duped against recently
+    featured roles, newest first, capped at ATS_MAX."""
+    try:
+        roles = ats.scrape_ats(days=ATS_DAYS, log=log)
+    except Exception as e:  # noqa: BLE001
+        log(f"WARN ATS scrape failed: {e}")
+        return []
+    if STATE:
+        roles = [r for r in roles if _in_state(r["location"], STATE)]
+    seen_keys, out = set(), []
+    for r in sorted(roles, key=lambda r: (r.get("posted") or ""), reverse=True):
+        k = role_key(r["title"], r["company"])
+        if k in recent_keys or k in seen_keys:
+            continue
+        seen_keys.add(k)
+        out.append(r)
+    return out[:ATS_MAX]
+
+
 def main() -> int:
     _trim_log()
     picks, transition, seen = _gather()
-    if not picks and not transition:
+    ats_roles = gather_ats(seen.get("role_keys", {}))
+    if not picks and not transition and not ats_roles:
         log("No qualifying roles this run.")
         send_message(build_empty_message())
         return 0
@@ -601,13 +634,13 @@ def main() -> int:
     hook = rotate_pick(SPEC.VIDEO_HOOKS, seen.get("hook_recent", []), "hook")
     cap_tip = rotate_pick(SPEC.CAPTION_TIPS, [], "captip")
     apply_tip = rotate_pick(SPEC.APPLY_TIPS, seen.get("tip_recent", []), "applytip")
-    combined = picks + transition
-    script = draft_script(combined, len(combined))
+    combined = picks + transition + ats_roles
+    script = draft_script(picks + transition, len(picks + transition))
 
-    msg = build_digest(picks, transition, hook, cap_tip, apply_tip, script)
+    msg = build_digest(picks, transition, ats_roles, hook, cap_tip, apply_tip, script)
     if send_message(msg):
-        log(f"SENT {len(picks)} main + {len(transition)} transition: "
-            f"{[p['company'] for p in combined]}")
+        log(f"SENT {len(picks)} main + {len(transition)} transition + "
+            f"{len(ats_roles)} ATS: {[p['company'] for p in combined]}")
         today = date.today().isoformat()
         keys = seen.get("role_keys", {})
         for p in combined:
@@ -625,16 +658,16 @@ def main() -> int:
 
 def preview() -> int:
     """Scrape + rank and print to console — no Telegram, no de-dupe write."""
-    seen = load_seen()
     roles = scrape_all()
     picks, transition = rank_and_dedupe(roles, [])  # ignore de-dupe in preview
-    if not picks and not transition:
+    ats_roles = gather_ats([])
+    if not picks and not transition and not ats_roles:
         print("No qualifying roles found this run.")
         return 0
     hook = rotate_pick(SPEC.VIDEO_HOOKS, [], "hook")
     cap_tip = rotate_pick(SPEC.CAPTION_TIPS, [], "captip")
     apply_tip = rotate_pick(SPEC.APPLY_TIPS, [], "applytip")
-    text = build_digest(picks, transition, hook, cap_tip, apply_tip, None)
+    text = build_digest(picks, transition, ats_roles, hook, cap_tip, apply_tip, None)
     text = re.sub(r"<[^>]+>", "", text)
     text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
     print(text)

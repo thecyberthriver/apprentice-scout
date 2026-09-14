@@ -14,6 +14,7 @@ lives in apprentice_scout.py and imports these names.
 
 from __future__ import annotations
 
+import re
 from urllib.parse import quote
 
 # ---------------------------------------------------------------------------
@@ -264,6 +265,10 @@ def place_links(place: str) -> list[tuple[str, str]]:
         ("Google Jobs",
          "https://www.google.com/search?ibp=htl;jobs&q="
          + quote(f"{kw} jobs in {loc} posted this week")),
+        # hiring.cafe indexes company career pages / ATS directly. Its search API
+        # is auth-gated (can't scrape), so we hand you its filtered results page.
+        ("hiring.cafe — company career pages & ATS",
+         "https://hiring.cafe/?q=" + quote(f"{kw} {loc}")),
     ]
 
 
@@ -279,6 +284,99 @@ def resolve_state(arg: str) -> str | None:
         if full.lower() == a.lower():
             return full
     return None
+
+
+# ---------------------------------------------------------------------------
+# ENTRY-to-MID role titles (cyber + IT) — the "what to search for" catalog.
+# Used to filter ATS / company-board postings (ats.py) down to roles a career
+# starter or switcher can actually land. Matched as a lowercased substring
+# against the job title. Add your own freely.
+# ---------------------------------------------------------------------------
+
+CYBER_ROLE_TITLES = [
+    "soc analyst", "security operations", "security analyst", "cybersecurity analyst",
+    "cyber security analyst", "information security analyst", "infosec analyst",
+    "security engineer", "cybersecurity engineer", "detection engineer",
+    "detection and response", "incident response", "threat analyst", "threat intelligence",
+    "threat detection", "vulnerability analyst", "vulnerability management",
+    "grc analyst", "grc engineer", "governance risk", "security compliance",
+    "compliance analyst", "risk analyst", "identity and access", "iam analyst",
+    "iam engineer", "penetration tester", "pen tester", "application security",
+    "appsec", "product security", "cloud security", "security specialist",
+    "security operations center", "security administrator", "security consultant",
+    "soc support", "security awareness", "ot/ics", "ics security",
+    "associate security", "junior security", "security analyst i", "security analyst ii",
+]
+
+IT_ROLE_TITLES = [
+    "help desk", "helpdesk", "service desk", "desktop support", "it support",
+    "technical support", "support specialist", "support engineer", "support analyst",
+    "system administrator", "systems administrator", "sysadmin", "it administrator",
+    "network administrator", "network engineer", "network technician",
+    "it technician", "it analyst", "it specialist", "it associate",
+    "systems engineer", "systems analyst", "site reliability", " sre ",
+    "devops engineer", "cloud engineer", "cloud administrator", "data analyst",
+    "data engineer", "junior developer", "associate engineer", "software engineer i",
+    "software engineer ii", "junior software", "noc technician", "noc analyst",
+    "field technician", "technical analyst",
+]
+
+ENTRY_MID_TITLES = CYBER_ROLE_TITLES + IT_ROLE_TITLES
+
+# Senior/lead titles to exclude from ATS results. Matched against a
+# punctuation-normalized title (so "Principal, X" is caught). Allows "II" (mid)
+# but blocks "III"+; separate from SENIOR_BLOCK (which also blocks "ii ").
+ATS_SENIOR = [
+    " senior ", " sr ", " staff ", " principal ", " lead ", " team lead ",
+    " manager ", " director ", " vp ", " vice president ", " head of ",
+    " architect ", " chief ", " iii ", " 3 ", " experienced ", " expert ",
+    " distinguished ",
+]
+
+_CYBER_HINTS = ("secur", "cyber", "soc", "infosec", "threat", "grc", "iam",
+                "vulnerab", "incident", "detection", "penetration", "appsec",
+                "compliance", "risk", "ot/ics", "ics ")
+
+
+def entry_mid_title(title: str) -> bool:
+    """True if a job title is an entry-to-mid cyber OR IT role (and not senior)."""
+    low = f" {title.lower()} "
+    norm = " " + re.sub(r"[^a-z0-9]+", " ", title.lower()).strip() + " "
+    if any(s in norm for s in ATS_SENIOR):
+        return False
+    return any(k in low for k in ENTRY_MID_TITLES)
+
+
+def is_cyber_title(title: str) -> bool:
+    low = title.lower()
+    return any(h in low for h in _CYBER_HINTS)
+
+
+# ---------------------------------------------------------------------------
+# ATS / COMPANY BOARDS — scraped DIRECTLY from each employer's public job-board
+# API (Greenhouse / Lever expose these for job distribution — allowed, no key).
+# This is the "employer websites / ATS that allow scraping" source. (slug, name)
+# Add any company that hosts on these ATSes; verify the slug returns jobs first:
+#   Greenhouse: https://boards-api.greenhouse.io/v1/boards/<slug>/jobs
+#   Lever:      https://api.lever.co/v0/postings/<slug>?mode=json
+# ---------------------------------------------------------------------------
+
+GREENHOUSE_BOARDS = [
+    ("cloudflare", "Cloudflare"), ("datadog", "Datadog"), ("gitlab", "GitLab"),
+    ("okta", "Okta"), ("huntress", "Huntress"), ("elastic", "Elastic"),
+    ("zscaler", "Zscaler"), ("recordedfuture", "Recorded Future"),
+    ("abnormalsecurity", "Abnormal Security"), ("expel", "Expel"),
+    ("dragos", "Dragos"), ("cybereason", "Cybereason"), ("netskope", "Netskope"),
+    ("fastly", "Fastly"), ("twilio", "Twilio"), ("databricks", "Databricks"),
+    ("stripe", "Stripe"), ("coinbase", "Coinbase"), ("robinhood", "Robinhood"),
+    ("affirm", "Affirm"), ("reddit", "Reddit"), ("airbnb", "Airbnb"),
+    ("lyft", "Lyft"),
+]
+
+LEVER_BOARDS = [
+    ("spotify", "Spotify"),
+    # Add cyber/tech employers that host on Lever, e.g. ("company", "Company").
+]
 
 
 # Educational pillar so the video teaches, not just lists.
