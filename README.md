@@ -1,5 +1,10 @@
 # Apprentice Scout 🎬🔐
 
+> 📖 **Workshop / architecture guide with diagrams + screenshots:**
+> [`docs/how-it-works.md`](docs/how-it-works.md) — how the scraper, role index,
+> Cloudflare webhook, and `/search` (keyword + state → direct job links) fit
+> together, plus full setup.
+
 A local Windows Python + Telegram agent that scouts **paid apprenticeships,
 rotational / leadership-development programs, and early-career cybersecurity &
 tech roles posted in the last 7 days** — and hands you a **film-ready TikTok

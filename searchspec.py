@@ -352,6 +352,12 @@ def is_cyber_title(title: str) -> bool:
     return any(h in low for h in _CYBER_HINTS)
 
 
+def is_senior_title(title: str) -> bool:
+    """True for senior/lead/exec titles (entry-to-mid bot excludes these)."""
+    norm = " " + re.sub(r"[^a-z0-9]+", " ", title.lower()).strip() + " "
+    return any(s in norm for s in ATS_SENIOR)
+
+
 # ---------------------------------------------------------------------------
 # ATS / COMPANY BOARDS — scraped DIRECTLY from each employer's public job-board
 # API (Greenhouse / Lever expose these for job distribution — allowed, no key).

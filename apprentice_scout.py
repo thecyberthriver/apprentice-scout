@@ -711,6 +711,8 @@ def build_index() -> int:
 
     seen, items = set(), []
     for r in roles:
+        if SPEC.is_senior_title(r["title"]):   # entry-to-mid bot: drop senior/lead/exec
+            continue
         u = r.get("url") or ""
         k = u or role_key(r["title"], r["company"])
         if k in seen:
