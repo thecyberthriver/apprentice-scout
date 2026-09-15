@@ -459,6 +459,27 @@ def is_senior_title(title: str) -> bool:
     return any(s in norm for s in ATS_SENIOR)
 
 
+_ENTRY_WORDS = (" apprentice", " intern", " junior ", " jr ", " associate ", " entry ",
+                " new grad", " graduate ", " early career ", " early talent ", " trainee ",
+                " i ", " 1 ", " help desk ", " service desk ", " desktop support ")
+
+
+def level_of(title: str) -> str:
+    """'entry' | 'mid' | 'senior' from the title alone (ATS gives us no more).
+    /search filters on this; default view is entry+mid, 'senior' opts in."""
+    if is_senior_title(title):
+        return "senior"
+    norm = " " + re.sub(r"[^a-z0-9]+", " ", title.lower()).strip() + " "
+    return "entry" if any(w in norm for w in _ENTRY_WORDS) else "mid"
+
+
+def tech_title(title: str) -> bool:
+    """Any-level cyber OR IT title (the index keeps seniors; ATS boards list
+    sales/marketing too, so this is the 'is it our field at all' gate)."""
+    low = f" {title.lower()} "
+    return cyber_domain(title) is not None or any(k in low for k in ENTRY_MID_TITLES)
+
+
 # ---------------------------------------------------------------------------
 # ATS / COMPANY BOARDS — scraped DIRECTLY from each employer's public job-board
 # API (Greenhouse / Lever expose these for job distribution — allowed, no key).
@@ -516,4 +537,8 @@ if __name__ == "__main__":  # self-check: python searchspec.py
     assert entry_mid_title("Privacy Analyst") and entry_mid_title("DevSecOps Engineer")
     assert domain_label("Network Security Engineer") == "🔐 D4 Network Sec"
     assert domain_label("Data Analyst", cyber=False) == "💻 Tech"
+    assert level_of("Associate SOC Analyst") == "entry" and level_of("SOC Analyst I") == "entry"
+    assert level_of("SOC Analyst II") == "mid" and level_of("Security Engineer") == "mid"
+    assert level_of("Senior Security Engineer") == "senior" and level_of("Director, GRC") == "senior"
+    assert tech_title("Senior Security Engineer") and not tech_title("Account Executive")
     print("searchspec self-check OK —", len(QUERIES), "queries,", len(CYBER_ROLE_TITLES), "cyber titles")

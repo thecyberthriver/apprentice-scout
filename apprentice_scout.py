@@ -705,26 +705,25 @@ def build_index() -> int:
     _trim_log()
     roles = scrape_all()  # jobspy (Indeed direct-URL / Google / LinkedIn), nationwide
     try:
-        roles += ats.scrape_ats(days=ATS_DAYS, log=log)  # direct-from-employer ATS
+        roles += ats.scrape_ats(days=ATS_DAYS, log=log, levels=None)  # ATS, every level
     except Exception as e:  # noqa: BLE001
         log(f"WARN ATS scrape failed: {e}")
 
     seen, items = set(), []
     for r in roles:
-        if SPEC.is_senior_title(r["title"]):   # entry-to-mid bot: drop senior/lead/exec
-            continue
         u = r.get("url") or ""
         k = u or role_key(r["title"], r["company"])
         if k in seen:
             continue
         seen.add(k)
         tag = r.get("tag") or SPEC.domain_label(r["title"], cyber=SPEC.is_cyber_title(r["title"]))
+        lvl = SPEC.level_of(r["title"])   # /search filters on this (default entry+mid)
         items.append({
-            "t": r["title"], "c": r["company"], "u": u,
+            "t": r["title"], "c": r["company"], "u": u, "lvl": lvl,
             "loc": r.get("location", ""), "st": _loc_state(r.get("location", "")),
             "sal": r.get("salary", ""), "posted": r.get("posted") or "",
             "src": r.get("site", ""), "tag": tag,
-            "kw": f"{r['title']} {r['company']} {tag} {r.get('query_tag','')}".lower(),
+            "kw": f"{r['title']} {r['company']} {tag} {r.get('query_tag','')} {lvl}".lower(),
         })
     items.sort(key=lambda x: x["posted"], reverse=True)
     items = items[:INDEX_MAX]

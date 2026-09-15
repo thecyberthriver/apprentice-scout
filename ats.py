@@ -51,10 +51,17 @@ def _us_location(loc: str) -> bool:
     return any(full.lower() in low for full in SPEC.US_STATES.values())
 
 
+def _keep(title: str, levels) -> bool:
+    """Cyber/IT title at one of `levels` (None = every level)."""
+    return SPEC.tech_title(title) and (levels is None or SPEC.level_of(title) in levels)
+
+
 def _tag(title: str) -> str:
     domain = SPEC.domain_label(title, cyber=SPEC.is_cyber_title(title))
     low = title.lower()
-    if "apprentice" in low:
+    if SPEC.is_senior_title(title):
+        kind = "Senior"
+    elif "apprentice" in low:
         kind = "Apprenticeship"
     elif any(w in low for w in ("intern", "new grad", "graduate", "early career", "junior", "associate", "i ", " i", "entry")):
         kind = "Entry-level"
@@ -89,7 +96,7 @@ def _fresh(dt: datetime | None, cutoff: datetime) -> bool:
     return dt is None or dt >= cutoff  # keep undated roles
 
 
-def _greenhouse(slug, name, cutoff, log):
+def _greenhouse(slug, name, cutoff, log, levels):
     url = f"https://boards-api.greenhouse.io/v1/boards/{slug}/jobs"
     r = requests.get(url, headers=_UA, timeout=_TIMEOUT)
     r.raise_for_status()
@@ -97,7 +104,7 @@ def _greenhouse(slug, name, cutoff, log):
     for j in r.json().get("jobs", []):
         title = (j.get("title") or "").strip()
         loc = ((j.get("location") or {}).get("name") or "").strip()
-        if not title or not SPEC.entry_mid_title(title) or not _us_location(loc):
+        if not title or not _keep(title, levels) or not _us_location(loc):
             continue
         raw = j.get("first_published") or j.get("updated_at") or ""
         dt = None
@@ -113,7 +120,7 @@ def _greenhouse(slug, name, cutoff, log):
     return out
 
 
-def _lever(slug, name, cutoff, log):
+def _lever(slug, name, cutoff, log, levels):
     url = f"https://api.lever.co/v0/postings/{slug}?mode=json"
     r = requests.get(url, headers=_UA, timeout=_TIMEOUT)
     r.raise_for_status()
@@ -122,7 +129,7 @@ def _lever(slug, name, cutoff, log):
     for j in data if isinstance(data, list) else []:
         title = (j.get("text") or "").strip()
         loc = ((j.get("categories") or {}).get("location") or "").strip()
-        if not title or not SPEC.entry_mid_title(title) or not _us_location(loc):
+        if not title or not _keep(title, levels) or not _us_location(loc):
             continue
         ms = j.get("createdAt")
         dt = datetime.fromtimestamp(ms / 1000, tz=timezone.utc) if isinstance(ms, (int, float)) else None
@@ -134,9 +141,10 @@ def _lever(slug, name, cutoff, log):
     return out
 
 
-def scrape_ats(days: int, log=print) -> list[dict]:
+def scrape_ats(days: int, log=print, levels=("entry", "mid")) -> list[dict]:
     """Scrape all configured Greenhouse + Lever boards for fresh (<= `days`)
-    entry-to-mid cyber/IT roles. Each board is isolated: one failing (rate limit,
+    cyber/IT roles at `levels` (default entry+mid for the digest; None = all,
+    used by the /search index). Each board is isolated: one failing (rate limit,
     moved off the ATS) never kills the run."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
     roles: list[dict] = []
@@ -144,7 +152,7 @@ def scrape_ats(days: int, log=print) -> list[dict]:
                           (_lever, SPEC.LEVER_BOARDS)):
         for slug, name in boards:
             try:
-                roles.extend(fetch(slug, name, cutoff, log))
+                roles.extend(fetch(slug, name, cutoff, log, levels))
             except Exception as e:  # noqa: BLE001
                 log(f"WARN ATS {fetch.__name__[1:]} '{slug}' failed: {e}")
     log(f"ATS: {len(roles)} entry/mid cyber-IT roles from "

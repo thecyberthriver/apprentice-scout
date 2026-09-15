@@ -51,21 +51,38 @@ async function getIndex() {
   return CACHE;
 }
 
-// Split "<keyword...> <state>" — trailing 2-letter code or full state name is the
-// state; the rest is the keyword. Either part may be empty.
+// Level words anywhere in the query select which index levels to show.
+// Default (no level word) = entry + mid, the bot's home turf; "senior" opts in.
+const LEVEL_WORDS = [
+  [/\b(entry[- ]?level|entry|junior|jr)\b/gi, ["entry"]],
+  [/\b(mid[- ]?level|mid|intermediate)\b/gi, ["mid"]],
+  [/\b(senior|sr|lead|staff|principal)\b/gi, ["senior"]],
+  [/\b(all levels|any level|all)\b/gi, ["entry", "mid", "senior"]],
+];
+const DEFAULT_LEVELS = ["entry", "mid"];
+
+// Split "<level> <keyword...> <state>" — trailing 2-letter code or full state
+// name is the state; level words are pulled out; the rest is the keyword.
 function parseQuery(arg) {
   arg = (arg || "").trim();
-  if (!arg) return { kw: "", state: "" };
+  let levels = null;
+  for (const [re, lv] of LEVEL_WORDS) {
+    if (re.test(arg)) { levels = [...new Set([...(levels || []), ...lv])]; arg = arg.replace(re, " "); }
+    re.lastIndex = 0;
+  }
+  arg = arg.replace(/\s+/g, " ").trim();
+  const out = { kw: "", state: "", levels: levels || DEFAULT_LEVELS, explicit: !!levels };
+  if (!arg) return out;
   const toks = arg.split(/\s+/);
   const last = toks[toks.length - 1].toUpperCase();
   if (/^[A-Z]{2}$/.test(last) && STATES[last]) {
-    return { kw: toks.slice(0, -1).join(" ").toLowerCase(), state: last };
+    return { ...out, kw: toks.slice(0, -1).join(" ").toLowerCase(), state: last };
   }
   for (let n = Math.min(3, toks.length); n >= 1; n--) {
     const code = FULL_TO_CODE[toks.slice(-n).join(" ").toLowerCase()];
-    if (code) return { kw: toks.slice(0, toks.length - n).join(" ").toLowerCase(), state: code };
+    if (code) return { ...out, kw: toks.slice(0, toks.length - n).join(" ").toLowerCase(), state: code };
   }
-  return { kw: arg.toLowerCase(), state: "" };
+  return { ...out, kw: arg.toLowerCase() };
 }
 
 function placeLinks(place) {
@@ -86,7 +103,8 @@ function roleLines(hits) {
     const posted = r.posted ? ` · ${esc(r.posted)}` : "";
     const src = r.src ? ` <i>(${esc(r.src)})</i>` : "";
     out.push(`${i + 1}. <a href="${esc(r.u)}"><b>${esc(r.t)}</b></a> — ${esc(r.c)}${src}`);
-    out.push(`     ${esc(r.tag || "role")}${loc}${sal}${posted}`);
+    const lvl = r.lvl ? ` · ${esc(r.lvl)}` : "";
+    out.push(`     ${esc(r.tag || "role")}${lvl}${loc}${sal}${posted}`);
   });
   return out;
 }
@@ -103,12 +121,14 @@ function chunk(lines, limit = 3800) {
 }
 
 async function searchBlocks(arg) {
-  const { kw, state } = parseQuery(arg);
+  const { kw, state, levels, explicit } = parseQuery(arg);
   const idx = await getIndex();
   // Whole-word matching so "soc" doesn't match "asSOCiates".
   const res = kw.split(/\s+/).filter(Boolean)
     .map((t) => new RegExp("\\b" + t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\b", "i"));
-  const label = [kw.trim(), state ? STATES[state] : ""].filter(Boolean).join(" · ") || "everything";
+  const lvlLabel = levels.length === 3 ? "all levels" : levels.join("+");
+  const label = [kw.trim(), state ? STATES[state] : "", explicit ? lvlLabel : ""]
+    .filter(Boolean).join(" · ") || "everything";
 
   if (!idx.roles.length) {
     return [`🔎 <b>${esc(label)}</b> — the role index isn't available right now. ` +
@@ -117,7 +137,8 @@ async function searchBlocks(arg) {
   }
 
   let hits = idx.roles.filter((r) =>
-    (!state || r.st === state) && res.every((re) => re.test(r.kw || "")));
+    (!state || r.st === state) && levels.includes(r.lvl || "mid") &&
+    res.every((re) => re.test(r.kw || "")));
   hits = hits.slice(0, MAX_RESULTS);
 
   if (!hits.length) {
@@ -199,7 +220,7 @@ async function handleUpdate(env, update) {
   }
 
   if (low.startsWith("/tailor")) {
-    await tailor(env, chatId, t.replace(/^\/tailor/i, "").trim());
+    await tailor(env, chatId, t.replace(/^\/tailor\b/i, "").trim());
     return;
   }
 

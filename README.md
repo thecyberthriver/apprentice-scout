@@ -79,6 +79,7 @@ pip install -r requirements.txt          # python-jobspy, requests, anthropic
 
 - `QUERIES` — the board queries (cyber/tech × apprentice/rotational/early-career, plus one pass per CISSP domain D1–D8).
 - `CYBER_DOMAINS` — CISSP 8-domain title keywords; labels every cyber role line (e.g. `🔐 D7 SecOps`) and extends `CYBER_ROLE_TITLES`.
+- `level_of()` — entry / mid / senior from the title. The digest stays entry-to-mid; the `/search` index keeps every level and the bot shows entry+mid unless you type a level: `/search entry level cyber`, `/search senior soc analyst NY`, `/search all grc`.
 - `SITES` — boards to scrape (`google`, `linkedin`; add `indeed`/`zip_recruiter`
   to try, though both block scrapers).
 - `EARLY_CAREER` / `TECH_CYBER` / `PAID_BOOST` — scoring keyword weights.
