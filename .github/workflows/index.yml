@@ -6,7 +6,7 @@ name: Apprentice Scout role index
 
 on:
   schedule:
-    - cron: "0 */6 * * *"   # every 6 hours
+    - cron: "0 */2 * * *"   # every 2 hours — employer/ATS postings land in /search within ~2h of going live
   workflow_dispatch: {}
 
 permissions:

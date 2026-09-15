@@ -499,16 +499,26 @@ def tech_title(title: str) -> bool:
 #   Lever:      https://api.lever.co/v0/postings/<slug>?mode=json
 # ---------------------------------------------------------------------------
 
+# Every slug below was probed live on 2026-09-14 and returned cyber/IT titles.
+# Re-probe before adding: a wrong slug is a silent 404 (logged as WARN, skipped).
+
 GREENHOUSE_BOARDS = [
     # Security / cyber-focused employers
     ("cloudflare", "Cloudflare"), ("datadog", "Datadog"), ("okta", "Okta"),
     ("huntress", "Huntress"), ("elastic", "Elastic"), ("zscaler", "Zscaler"),
     ("recordedfuture", "Recorded Future"), ("abnormalsecurity", "Abnormal Security"),
-    ("expel", "Expel"), ("dragos", "Dragos"), ("cybereason", "Cybereason"),
-    ("netskope", "Netskope"), ("tanium", "Tanium"), ("bugcrowd", "Bugcrowd"),
-    ("knowbe4", "KnowBe4"), ("nozominetworks", "Nozomi Networks"),
-    ("censys", "Censys"), ("tailscale", "Tailscale"),
-    # Tech / IT employers (IT, cloud, SRE, support, data roles)
+    ("expel", "Expel"), ("dragos", "Dragos"), ("netskope", "Netskope"),
+    ("tanium", "Tanium"), ("bugcrowd", "Bugcrowd"), ("knowbe4", "KnowBe4"),
+    ("nozominetworks", "Nozomi Networks"), ("censys", "Censys"), ("tailscale", "Tailscale"),
+    ("wizinc", "Wiz"), ("catonetworks", "Cato Networks"), ("keepersecurity", "Keeper Security"),
+    ("digicert", "DigiCert"), ("pingidentity", "Ping Identity"), ("axonius", "Axonius"),
+    ("chainguard", "Chainguard"), ("obsidiansecurity", "Obsidian Security"),
+    ("guidepoint", "GuidePoint Security"), ("bishopfox", "Bishop Fox"), ("endorlabs", "Endor Labs"),
+    ("transmitsecurity", "Transmit Security"), ("lookout", "Lookout"), ("synack", "Synack"),
+    ("torq", "Torq"), ("tines", "Tines"), ("orcasecurity", "Orca Security"),
+    ("saltsecurity", "Salt Security"), ("yubico", "Yubico"), ("bitwarden", "Bitwarden"),
+    ("jfrog", "JFrog"), ("sumologic", "Sumo Logic"),
+    # Tech / IT employers (IT, cloud, SRE, support, data + their security teams)
     ("gitlab", "GitLab"), ("fastly", "Fastly"), ("twilio", "Twilio"),
     ("databricks", "Databricks"), ("mongodb", "MongoDB"), ("vercel", "Vercel"),
     ("stripe", "Stripe"), ("coinbase", "Coinbase"), ("robinhood", "Robinhood"),
@@ -516,12 +526,42 @@ GREENHOUSE_BOARDS = [
     ("reddit", "Reddit"), ("airbnb", "Airbnb"), ("lyft", "Lyft"),
     ("roblox", "Roblox"), ("discord", "Discord"), ("figma", "Figma"),
     ("asana", "Asana"), ("gusto", "Gusto"), ("instacart", "Instacart"),
-    ("pinterest", "Pinterest"),
+    ("pinterest", "Pinterest"), ("anthropic", "Anthropic"), ("mozilla", "Mozilla"),
+    ("samsara", "Samsara"), ("chime", "Chime"), ("mercury", "Mercury"), ("alloy", "Alloy"),
+    ("newrelic", "New Relic"), ("opentable", "OpenTable"), ("postman", "Postman"),
+    ("honeycomb", "Honeycomb"), ("launchdarkly", "LaunchDarkly"), ("pagerduty", "PagerDuty"),
+    ("planetscale", "PlanetScale"), ("lithic", "Lithic"), ("dropbox", "Dropbox"),
 ]
 
 LEVER_BOARDS = [
-    ("spotify", "Spotify"),
-    # Add cyber/tech employers that host on Lever, e.g. ("company", "Company").
+    ("spotify", "Spotify"), ("palantir", "Palantir"), ("binance", "Binance"),
+    ("zoox", "Zoox"), ("picus", "Picus Security"),
+]
+
+# Ashby: https://api.ashbyhq.com/posting-api/job-board/<slug>
+ASHBY_BOARDS = [
+    ("openai", "OpenAI"), ("vanta", "Vanta"), ("1password", "1Password"), ("drata", "Drata"),
+    ("semgrep", "Semgrep"), ("opal", "Opal Security"), ("socket", "Socket"),
+    ("harvey", "Harvey"), ("replit", "Replit"), ("supabase", "Supabase"), ("cohere", "Cohere"),
+    ("ramp", "Ramp"), ("notion", "Notion"), ("sierra", "Sierra"), ("elevenlabs", "ElevenLabs"),
+    ("perplexity", "Perplexity"), ("cursor", "Cursor"), ("baseten", "Baseten"),
+    ("modal", "Modal"), ("linear", "Linear"), ("posthog", "PostHog"), ("render", "Render"),
+]
+
+# Workday: "tenant/wdN/site" -> https://<tenant>.<wdN>.myworkdayjobs.com/<site>
+# (the enterprise/defense/finance employers where most cyber headcount lives).
+WORKDAY_BOARDS = [
+    ("crowdstrike/wd5/crowdstrikecareers", "CrowdStrike"), ("nvidia/wd5/NVIDIAExternalCareerSite", "NVIDIA"),
+    ("leidos/wd5/External", "Leidos"), ("gdit/wd5/External_Career_Site", "GDIT"),
+    ("motorolasolutions/wd5/Careers", "Motorola Solutions"), ("accenture/wd103/AccentureCareers", "Accenture"),
+    ("workday/wd5/Workday", "Workday"), ("adobe/wd5/external_experienced", "Adobe"),
+    ("salesforce/wd12/External_Career_Site", "Salesforce"), ("paypal/wd1/jobs", "PayPal"),
+    ("citi/wd5/2", "Citi"), ("truist/wd1/Careers", "Truist"), ("vanguard/wd5/vanguard_external", "Vanguard"),
+    ("allstate/wd5/Allstate_Careers", "Allstate"), ("pnc/wd5/External", "PNC"),
+    ("capitalone/wd12/Capital_One", "Capital One"), ("blackrock/wd1/BlackRock_Professional", "BlackRock"),
+    ("homedepot/wd5/CareerDepot", "The Home Depot"), ("target/wd5/targetcareers", "Target"),
+    ("warnerbros/wd5/global", "Warner Bros. Discovery"), ("disney/wd5/disneycareer", "Disney"),
+    ("humana/wd5/Humana_External_Career_Site", "Humana"), ("hp/wd5/ExternalCareerSite", "HP"),
 ]
 
 

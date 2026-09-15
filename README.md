@@ -85,6 +85,7 @@ pip install -r requirements.txt          # python-jobspy, requests, anthropic
 - `EARLY_CAREER` / `TECH_CYBER` / `PAID_BOOST` — scoring keyword weights.
 - `EXCLUDE_COMPANIES` — aggregator/reposter blocklist.
 - `TRANSITION_SIGNALS` — keywords that flag career-changer-friendly roles.
+- `GREENHOUSE_BOARDS` / `LEVER_BOARDS` / `ASHBY_BOARDS` / `WORKDAY_BOARDS` — employer career pages read directly (roles appear here the moment they are posted). Probe a slug before adding it.
 - `TARGET_STATES` — which states get tappable "Search by state" links.
 - `MIN_SCORE`, `MIN_TRANS_SCORE`, `MAX_PICKS`, `MAX_TRANSITION`, `HOURS_OLD`, `MAX_AGE_DAYS` (3-week cap on the /search index; the Worker also drops anything over 30 days),
   `LOCATION` — filter/scope knobs.
