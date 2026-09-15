@@ -155,6 +155,30 @@ async function tgSend(env, chatId, text) {
   });
 }
 
+// /tailor <url> -> kick the private resume-tailor GitHub Action; it sends the
+// report back to this chat itself. Needs secret GITHUB_DISPATCH_TOKEN (actions:write
+// on thecyberthriver/resume-tailor).
+async function tailor(env, chatId, arg) {
+  const url = (arg || "").split(/\s+/)[0];
+  if (!/^https?:\/\/\S+$/i.test(url)) {
+    await tgSend(env, chatId, "Usage: <code>/tailor https://…posting url…</code>");
+    return;
+  }
+  if (!env.GITHUB_DISPATCH_TOKEN) {
+    await tgSend(env, chatId, "⚠️ /tailor isn't wired up: GITHUB_DISPATCH_TOKEN secret missing on the worker.");
+    return;
+  }
+  const r = await fetch("https://api.github.com/repos/thecyberthriver/resume-tailor/actions/workflows/tailor.yml/dispatches", {
+    method: "POST",
+    headers: { authorization: `Bearer ${env.GITHUB_DISPATCH_TOKEN}`, accept: "application/vnd.github+json",
+      "content-type": "application/json", "user-agent": "apprentice-scout-bot" },
+    body: JSON.stringify({ ref: "main", inputs: { url } }),
+  });
+  await tgSend(env, chatId, r.status === 204
+    ? `🧵 Tailoring against <a href="${esc(url)}">this posting</a> — report lands here in about a minute.`
+    : `⚠️ GitHub refused the dispatch (HTTP ${r.status}). Check the GITHUB_DISPATCH_TOKEN secret.`);
+}
+
 async function handleUpdate(env, update) {
   const msg = update.message || update.edited_message;
   if (!msg || !msg.text || !msg.chat) return;
@@ -171,6 +195,11 @@ async function handleUpdate(env, update) {
   if (["/states", "states"].includes(low)) {
     await tgSend(env, chatId, `🗺️ <b>State codes</b>\n${esc(Object.keys(STATES).sort().join(" "))}\n\n` +
       "e.g. <code>/search soc analyst TX</code>, or just <code>TX</code>.");
+    return;
+  }
+
+  if (low.startsWith("/tailor")) {
+    await tailor(env, chatId, t.replace(/^\/tailor/i, "").trim());
     return;
   }
 
