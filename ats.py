@@ -52,7 +52,7 @@ def _us_location(loc: str) -> bool:
 
 
 def _tag(title: str) -> str:
-    domain = "🔐 Cyber" if SPEC.is_cyber_title(title) else "💻 Tech"
+    domain = SPEC.domain_label(title, cyber=SPEC.is_cyber_title(title))
     low = title.lower()
     if "apprentice" in low:
         kind = "Apprenticeship"

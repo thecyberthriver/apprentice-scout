@@ -389,8 +389,8 @@ def classify_role(role: dict) -> dict | None:
 
     paid, _ = _kw_score(hay, SPEC.PAID_BOOST)
 
-    role["tag"] = _display_tag(early_hits, tech)
-    role["trans_tag"] = _transition_tag(trans_hits, tech)
+    role["tag"] = _display_tag(role["title"], early_hits, tech)
+    role["trans_tag"] = _transition_tag(role["title"], trans_hits, tech)
     role["main_score"] = early + tech + paid
     role["trans_score"] = trans + tech + paid
     role["is_main"] = early > 0 and role["main_score"] >= MIN_SCORE
@@ -400,8 +400,8 @@ def classify_role(role: dict) -> dict | None:
     return role
 
 
-def _display_tag(early_hits: list[str], tech_score: int) -> str:
-    domain = "🔐 Cyber" if tech_score >= 4 else "💻 Tech"
+def _display_tag(title: str, early_hits: list[str], tech_score: int) -> str:
+    domain = SPEC.domain_label(title, cyber=tech_score >= 4)
     if any("apprentice" in h for h in early_hits):
         kind = "Apprenticeship"
     elif any(h in ("rotational", "rotation", "development program",
@@ -415,8 +415,8 @@ def _display_tag(early_hits: list[str], tech_score: int) -> str:
     return f"{domain} · {kind}"
 
 
-def _transition_tag(trans_hits: list[str], tech_score: int) -> str:
-    domain = "🔐 Cyber" if tech_score >= 4 else "💻 Tech"
+def _transition_tag(title: str, trans_hits: list[str], tech_score: int) -> str:
+    domain = SPEC.domain_label(title, cyber=tech_score >= 4)
     h = set(trans_hits)
     if h & {"skillbridge", "veteran", "transitioning military", "military"}:
         kind = "Veteran / SkillBridge"
@@ -718,7 +718,7 @@ def build_index() -> int:
         if k in seen:
             continue
         seen.add(k)
-        tag = r.get("tag") or ("🔐 Cyber" if SPEC.is_cyber_title(r["title"]) else "💻 Tech")
+        tag = r.get("tag") or SPEC.domain_label(r["title"], cyber=SPEC.is_cyber_title(r["title"]))
         items.append({
             "t": r["title"], "c": r["company"], "u": u,
             "loc": r.get("location", ""), "st": _loc_state(r.get("location", "")),

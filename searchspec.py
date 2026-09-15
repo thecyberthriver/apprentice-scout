@@ -45,6 +45,47 @@ QUERIES = [
         "search_term": "associate cybersecurity analyst OR SOC analyst new grad OR entry level",
         "google_search_term": "entry level cybersecurity analyst new graduate jobs posted this week",
     },
+    # --- Cyber by CISSP domain (D1–D8) — entry/associate-level per specialty ---
+    {
+        "tag": "cyber-d1-grc",
+        "search_term": "GRC analyst OR cyber risk analyst OR security compliance analyst entry level",
+        "google_search_term": "entry level GRC risk compliance analyst cybersecurity jobs posted this week",
+    },
+    {
+        "tag": "cyber-d2-data",
+        "search_term": "data protection analyst OR privacy analyst OR DLP analyst entry level",
+        "google_search_term": "entry level data protection privacy DLP analyst jobs posted this week",
+    },
+    {
+        "tag": "cyber-d3-eng",
+        "search_term": "associate security engineer OR junior security engineer OR cloud security analyst",
+        "google_search_term": "junior associate security engineer cloud security jobs posted this week",
+    },
+    {
+        "tag": "cyber-d4-network",
+        "search_term": "network security analyst OR firewall administrator OR network security engineer entry level",
+        "google_search_term": "entry level network security firewall analyst jobs posted this week",
+    },
+    {
+        "tag": "cyber-d5-iam",
+        "search_term": "IAM analyst OR identity and access management associate OR access management analyst",
+        "google_search_term": "entry level identity and access management IAM analyst jobs posted this week",
+    },
+    {
+        "tag": "cyber-d6-assess",
+        "search_term": "junior penetration tester OR vulnerability analyst OR IT security auditor",
+        "google_search_term": "junior penetration tester vulnerability analyst security auditor jobs posted this week",
+    },
+    {
+        "tag": "cyber-d7-secops",
+        "search_term": "SOC analyst OR incident response analyst OR threat intelligence analyst OR digital forensics analyst",
+        "google_search_term": "entry level SOC incident response threat intelligence digital forensics analyst jobs posted this week",
+    },
+    {
+        "tag": "cyber-d8-appsec",
+        "search_term": "application security analyst OR DevSecOps engineer OR product security associate junior",
+        "google_search_term": "junior application security DevSecOps product security jobs posted this week",
+    },
     {
         "tag": "tech-apprentice",
         "search_term": "tech apprenticeship OR software apprentice OR IT apprentice",
@@ -113,8 +154,16 @@ EARLY_CAREER = {
 # Cyber/tech relevance — a role must hit at least one of these too.
 TECH_CYBER = {
     "cybersecurity": 5, "cyber security": 5, "cyber": 4, "infosec": 4,
-    "information security": 5, "security": 3, "soc": 3, "grc": 3,
+    "information security": 5, "security": 3, " soc ": 3, "grc": 3,
     "penetration": 4, "incident response": 4, "threat": 3, "vulnerability": 3,
+    # CISSP-domain specialties
+    "risk management": 3, "compliance": 2, "privacy": 3, "data protection": 4,
+    "data loss prevention": 4, " dlp ": 4, "cryptograph": 4, " pki ": 4, "zero trust": 3,
+    "network security": 4, "firewall": 3, " iam ": 4, "identity and access": 4,
+    "access management": 3, "privileged access": 4, "pentest": 4, "red team": 4,
+    "security audit": 3, "forensic": 4, " dfir ": 5, " siem ": 4, "malware": 4,
+    "threat hunt": 4, "blue team": 4, "application security": 4, "appsec": 4,
+    "devsecops": 4, "product security": 4, "secure code": 3,
     "software engineer": 3, "developer": 2, "cloud": 2, "network": 2,
     "data engineer": 2, "data analyst": 2, "it ": 2, "technology": 2,
     "devops": 3, "systems engineer": 2, "help desk": 1,
@@ -308,6 +357,58 @@ CYBER_ROLE_TITLES = [
     "associate security", "junior security", "security analyst i", "security analyst ii",
 ]
 
+# CISSP 8 domains → title keywords (regex, word-bounded so "soc" can't match
+# "associate"). Order = tie-break priority when a title spans domains.
+# Drives (a) the domain label on every cyber role line in the digest and
+# (b) the domain-specific rows in CYBER_ROLE_TITLES below.
+CYBER_DOMAINS = {
+    "D7 SecOps": [r"\bsoc\b", "security operations", "incident response", "detection",
+                  "threat hunt", "threat intel", "threat analyst", "forensic", r"\bdfir\b",
+                  "malware", r"\bsiem\b", "blue team", "cyber defense", "security monitoring",
+                  r"\bedr\b", r"\bcsirt\b"],
+    "D6 Assess/Pentest": ["penetration", "pen tester", "pentest", "red team", "vulnerability",
+                          "security assessment", "security audit", "it audit", "security testing",
+                          "ethical hack", "offensive security", "bug bounty"],
+    "D8 AppSec": ["application security", "appsec", "product security", "devsecops",
+                  "secure code", "software security", r"\bsast\b", r"\bdast\b",
+                  "security champion"],
+    "D5 IAM": [r"\biam\b", "identity", "access management", "privileged access", r"\bpam\b",
+               "active directory", r"\bsso\b", "access control", "authentication"],
+    "D4 Network Sec": ["network security", "firewall", "network defense", "perimeter",
+                       r"\bvpn\b", "wireless security", r"\bsase\b", r"\bcnd\b"],
+    "D2 Asset/Data": ["data protection", "privacy", "data loss prevention", r"\bdlp\b",
+                      "data classification", "data security", "records management"],
+    "D1 Risk & GRC": [r"\bgrc\b", "governance", "risk analyst", "risk management", "cyber risk",
+                      "compliance", "policy analyst", "security awareness", "third party risk",
+                      "third-party risk", "vendor risk", r"\btprm\b", "information security officer"],
+    "D3 Sec Eng/Arch": ["security engineer", "security architect", "cryptograph", r"\bpki\b",
+                        "hardware security", "embedded security", "cloud security", "zero trust",
+                        "platform security", "infrastructure security", "secure design"],
+}
+_DOMAIN_RX = {d: re.compile("|".join(kws)) for d, kws in CYBER_DOMAINS.items()}
+
+# Domain-specific entry/mid titles, derived from the plain-word keywords above
+# (regex entries are for labelling only; a bare "\bsoc\b" isn't a title).
+CYBER_ROLE_TITLES += sorted({k for kws in CYBER_DOMAINS.values() for k in kws
+                             if "\\" not in k} - set(CYBER_ROLE_TITLES))
+
+
+def cyber_domain(title: str) -> str | None:
+    """CISSP domain label for a job title, e.g. 'D7 SecOps', or None."""
+    low = title.lower()
+    for d, rx in _DOMAIN_RX.items():
+        if rx.search(low):
+            return d
+    return None
+
+
+def domain_label(title: str, cyber: bool = True) -> str:
+    """Digest domain badge: '🔐 D5 IAM' / '🔐 Cyber' / '💻 Tech'."""
+    d = cyber_domain(title)
+    if d:
+        return f"🔐 {d}"
+    return "🔐 Cyber" if cyber else "💻 Tech"
+
 IT_ROLE_TITLES = [
     "help desk", "helpdesk", "service desk", "desktop support", "it support",
     "technical support", "support specialist", "support engineer", "support analyst",
@@ -333,9 +434,9 @@ ATS_SENIOR = [
     " distinguished ",
 ]
 
-_CYBER_HINTS = ("secur", "cyber", "soc", "infosec", "threat", "grc", "iam",
-                "vulnerab", "incident", "detection", "penetration", "appsec",
-                "compliance", "risk", "ot/ics", "ics ")
+# Generic cyber hints for titles that name no domain ("Cybersecurity Analyst").
+# "soc" lives in CYBER_DOMAINS as \bsoc\b — as a bare substring it matched "associate".
+_CYBER_HINTS = ("secur", "cyber", "infosec", "ot/ics", "ics ")
 
 
 def entry_mid_title(title: str) -> bool:
@@ -349,7 +450,7 @@ def entry_mid_title(title: str) -> bool:
 
 def is_cyber_title(title: str) -> bool:
     low = title.lower()
-    return any(h in low for h in _CYBER_HINTS)
+    return cyber_domain(title) is not None or any(h in low for h in _CYBER_HINTS)
 
 
 def is_senior_title(title: str) -> bool:
@@ -402,3 +503,17 @@ APPLY_TIPS = [
     "Tailor the resume title to the exact posting ('Associate SOC Analyst') to beat keyword filters.",
     "Set a LinkedIn alert for 'apprentice cybersecurity' + 'past 24 hours' to catch these first.",
 ]
+
+
+if __name__ == "__main__":  # self-check: python searchspec.py
+    assert cyber_domain("Associate SOC Analyst") == "D7 SecOps"
+    assert cyber_domain("IAM Analyst I") == "D5 IAM"
+    assert cyber_domain("Junior Penetration Tester") == "D6 Assess/Pentest"
+    assert cyber_domain("GRC Analyst") == "D1 Risk & GRC"
+    assert cyber_domain("Associate Software Developer") is None   # "soc" in "associate"
+    assert cyber_domain("Help Desk Technician") is None
+    assert is_cyber_title("Cybersecurity Analyst") and not is_cyber_title("Associate Developer")
+    assert entry_mid_title("Privacy Analyst") and entry_mid_title("DevSecOps Engineer")
+    assert domain_label("Network Security Engineer") == "🔐 D4 Network Sec"
+    assert domain_label("Data Analyst", cyber=False) == "💻 Tech"
+    print("searchspec self-check OK —", len(QUERIES), "queries,", len(CYBER_ROLE_TITLES), "cyber titles")

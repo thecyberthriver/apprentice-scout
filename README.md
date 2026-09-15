@@ -77,7 +77,8 @@ pip install -r requirements.txt          # python-jobspy, requests, anthropic
 
 ## Tuning (all in `searchspec.py` / the CONFIG block of `apprentice_scout.py`)
 
-- `QUERIES` — the board queries (cyber/tech × apprentice/rotational/early-career).
+- `QUERIES` — the board queries (cyber/tech × apprentice/rotational/early-career, plus one pass per CISSP domain D1–D8).
+- `CYBER_DOMAINS` — CISSP 8-domain title keywords; labels every cyber role line (e.g. `🔐 D7 SecOps`) and extends `CYBER_ROLE_TITLES`.
 - `SITES` — boards to scrape (`google`, `linkedin`; add `indeed`/`zip_recruiter`
   to try, though both block scrapers).
 - `EARLY_CAREER` / `TECH_CYBER` / `PAID_BOOST` — scoring keyword weights.
