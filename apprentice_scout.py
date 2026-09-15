@@ -66,6 +66,7 @@ STATE = ""                          # set to a full state name to scope the scra
                                     # usually set at runtime via `--state XX`. Empty = nationwide.
 HOURS_OLD = 168                     # 168h = last 7 days ("within the last week")
 ATS_DAYS = 14                       # employer-ATS roles posted within N days (ats.py)
+MAX_AGE_DAYS = 21                   # hard cap: nothing older than 3 weeks enters the /search index
 ATS_MAX = 12                        # employer/ATS roles shown in the digest section
 RESULTS_PER_QUERY = 25              # per board, per query pass (scheduled digest)
 SEARCH_RESULTS_PER_QUERY = 12       # lighter pass for on-demand /search replies
@@ -716,6 +717,12 @@ def build_index() -> int:
         if k in seen:
             continue
         seen.add(k)
+        # Age cap. Undated rows (LinkedIn gives no date) are kept: the scrape
+        # itself is bounded by HOURS_OLD / ATS_DAYS, and the Worker ages them
+        # from the index's build date.
+        posted = r.get("posted") or ""
+        if posted and (date.today() - date.fromisoformat(posted[:10])).days > MAX_AGE_DAYS:
+            continue
         tag = r.get("tag") or SPEC.domain_label(r["title"], cyber=SPEC.is_cyber_title(r["title"]))
         lvl = SPEC.level_of(r["title"])   # /search filters on this (default entry+mid)
         # Senior rows are new to the index; board queries return recruiter/PM noise

@@ -60,6 +60,7 @@ const LEVEL_WORDS = [
   [/\b(all levels|any level|all)\b/gi, ["entry", "mid", "senior"]],
 ];
 const DEFAULT_LEVELS = ["entry", "mid"];
+const MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;   // never show a role older than 30 days
 
 // Split "<level> <keyword...> <state>" — trailing 2-letter code or full state
 // name is the state; level words are pulled out; the rest is the keyword.
@@ -136,7 +137,12 @@ async function searchBlocks(arg) {
       placeLinks(state).map(([l, u]) => `   • <a href="${esc(u)}">${esc(l)}</a>`).join("\n")];
   }
 
+  // Hard drop for anything over 30 days (guards against a stale index if the
+  // rebuild stops running). Undated rows age from the index build date.
+  const cutoff = Date.now() - MAX_AGE_MS;
+  const built = Date.parse(idx.generated || "") || Date.now();
   let hits = idx.roles.filter((r) =>
+    (r.posted ? Date.parse(r.posted) : built) >= cutoff &&
     (!state || r.st === state) && levels.includes(r.lvl || "mid") &&
     res.every((re) => re.test(r.kw || "")));
   hits = hits.slice(0, MAX_RESULTS);
