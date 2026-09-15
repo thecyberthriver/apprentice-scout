@@ -727,7 +727,10 @@ def build_index() -> int:
             "loc": r.get("location", ""), "st": _loc_state(r.get("location", "")),
             "sal": r.get("salary", ""), "posted": r.get("posted") or "",
             "src": r.get("site", ""), "tag": tag,
-            "kw": f"{r['title']} {r['company']} {tag} {r.get('query_tag','')} {lvl}".lower(),
+            # Searchable text: title + company + domain badge + level. The query
+            # tag is deliberately NOT here — "cyber-d5-iam" made every row from
+            # that pass match /search iam, whatever its title.
+            "kw": f"{r['title']} {r['company']} {tag} {'cyber' if tag.startswith('🔐') else ''} {lvl}".lower(),
         })
     items.sort(key=lambda x: x["posted"], reverse=True)
     items = items[:INDEX_MAX]

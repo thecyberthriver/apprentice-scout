@@ -157,7 +157,7 @@ TECH_CYBER = {
     "information security": 5, "security": 3, " soc ": 3, "grc": 3,
     "penetration": 4, "incident response": 4, "threat": 3, "vulnerability": 3,
     # CISSP-domain specialties
-    "risk management": 3, "compliance": 2, "privacy": 3, "data protection": 4,
+    "cyber risk": 4, "security compliance": 4, "privacy": 3, "data protection": 4,
     "data loss prevention": 4, " dlp ": 4, "cryptograph": 4, " pki ": 4, "zero trust": 3,
     "network security": 4, "firewall": 3, " iam ": 4, "identity and access": 4,
     "access management": 3, "privileged access": 4, "pentest": 4, "red team": 4,
@@ -362,8 +362,10 @@ CYBER_ROLE_TITLES = [
 # Drives (a) the domain label on every cyber role line in the digest and
 # (b) the domain-specific rows in CYBER_ROLE_TITLES below.
 CYBER_DOMAINS = {
-    "D7 SecOps": [r"\bsoc\b", "security operations", "incident response", "detection",
-                  "threat hunt", "threat intel", "threat analyst", "forensic", r"\bdfir\b",
+    "D7 SecOps": [r"\bsoc\b", "security operations", "incident response", "threat detection",
+                  "detection engineer", "detection and response", "detection analyst",
+                  "threat hunt", "threat intel", "threat analyst", "digital forensic",
+                  "computer forensic", "cyber forensic", r"\bdfir\b",
                   "malware", r"\bsiem\b", "blue team", "cyber defense", "security monitoring",
                   r"\bedr\b", r"\bcsirt\b"],
     "D6 Assess/Pentest": ["penetration", "pen tester", "pentest", "red team", "vulnerability",
@@ -372,15 +374,22 @@ CYBER_DOMAINS = {
     "D8 AppSec": ["application security", "appsec", "product security", "devsecops",
                   "secure code", "software security", r"\bsast\b", r"\bdast\b",
                   "security champion"],
-    "D5 IAM": [r"\biam\b", "identity", "access management", "privileged access", r"\bpam\b",
-               "active directory", r"\bsso\b", "access control", "authentication"],
-    "D4 Network Sec": ["network security", "firewall", "network defense", "perimeter",
+    # Keep these specific: bare "identity"/"compliance"/"risk analyst"/"forensic"
+    # pulled in brand designers, HR compliance, credit risk and forensic accountants.
+    "D5 IAM": [r"\biam\b", "identity and access", "identity management", "identity security",
+               "identity governance", "identity engineer", "identity analyst", "access management",
+               "privileged access", r"\bpam\b", "active directory", r"\bsso\b", "access control",
+               "authentication"],
+    "D4 Network Sec": ["network security", "firewall", "network defense", "perimeter security",
                        r"\bvpn\b", "wireless security", r"\bsase\b", r"\bcnd\b"],
     "D2 Asset/Data": ["data protection", "privacy", "data loss prevention", r"\bdlp\b",
-                      "data classification", "data security", "records management"],
-    "D1 Risk & GRC": [r"\bgrc\b", "governance", "risk analyst", "risk management", "cyber risk",
-                      "compliance", "policy analyst", "security awareness", "third party risk",
-                      "third-party risk", "vendor risk", r"\btprm\b", "information security officer"],
+                      "data classification", "data security"],
+    "D1 Risk & GRC": [r"\bgrc\b", "security governance", r"\bit governance", "cyber risk",
+                      "security risk", r"\bit risk", "information risk", "technology risk",
+                      "security compliance", r"\bit compliance", "cyber compliance",
+                      "risk and compliance", "risk & compliance", "security policy",
+                      "security awareness", "third party risk", "third-party risk", "vendor risk",
+                      r"\btprm\b", "information security officer"],
     "D3 Sec Eng/Arch": ["security engineer", "security architect", "cryptograph", r"\bpki\b",
                         "hardware security", "embedded security", "cloud security", "zero trust",
                         "platform security", "infrastructure security", "secure design",
@@ -544,4 +553,9 @@ if __name__ == "__main__":  # self-check: python searchspec.py
     assert tech_title("Senior Security Engineer") and not tech_title("Account Executive")
     assert not is_cyber_title("Senior Financial Analyst - Analytics")   # "ics " used to match
     assert cyber_domain("ICS Security Analyst") == "D3 Sec Eng/Arch"
+    for noise in ("HRPP Regulatory Compliance Analyst", "Credit Risk Analyst",
+                  "Brand Identity Designer", "Forensic Accountant", "Leak Detection Technician"):
+        assert cyber_domain(noise) is None, noise
+    assert cyber_domain("IT Risk & Compliance Analyst") == "D1 Risk & GRC"
+    assert cyber_domain("Digital Forensics Analyst") == "D7 SecOps"
     print("searchspec self-check OK —", len(QUERIES), "queries,", len(CYBER_ROLE_TITLES), "cyber titles")
