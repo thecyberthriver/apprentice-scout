@@ -383,7 +383,8 @@ CYBER_DOMAINS = {
                       "third-party risk", "vendor risk", r"\btprm\b", "information security officer"],
     "D3 Sec Eng/Arch": ["security engineer", "security architect", "cryptograph", r"\bpki\b",
                         "hardware security", "embedded security", "cloud security", "zero trust",
-                        "platform security", "infrastructure security", "secure design"],
+                        "platform security", "infrastructure security", "secure design",
+                        "ot/ics", "ics security", "ot security", r"\bics\b", r"\bscada\b"],
 }
 _DOMAIN_RX = {d: re.compile("|".join(kws)) for d, kws in CYBER_DOMAINS.items()}
 
@@ -436,7 +437,7 @@ ATS_SENIOR = [
 
 # Generic cyber hints for titles that name no domain ("Cybersecurity Analyst").
 # "soc" lives in CYBER_DOMAINS as \bsoc\b — as a bare substring it matched "associate".
-_CYBER_HINTS = ("secur", "cyber", "infosec", "ot/ics", "ics ")
+_CYBER_HINTS = ("secur", "cyber", "infosec")  # ICS/OT lives in CYBER_DOMAINS (word-bounded)
 
 
 def entry_mid_title(title: str) -> bool:
@@ -541,4 +542,6 @@ if __name__ == "__main__":  # self-check: python searchspec.py
     assert level_of("SOC Analyst II") == "mid" and level_of("Security Engineer") == "mid"
     assert level_of("Senior Security Engineer") == "senior" and level_of("Director, GRC") == "senior"
     assert tech_title("Senior Security Engineer") and not tech_title("Account Executive")
+    assert not is_cyber_title("Senior Financial Analyst - Analytics")   # "ics " used to match
+    assert cyber_domain("ICS Security Analyst") == "D3 Sec Eng/Arch"
     print("searchspec self-check OK —", len(QUERIES), "queries,", len(CYBER_ROLE_TITLES), "cyber titles")

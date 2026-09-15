@@ -718,6 +718,10 @@ def build_index() -> int:
         seen.add(k)
         tag = r.get("tag") or SPEC.domain_label(r["title"], cyber=SPEC.is_cyber_title(r["title"]))
         lvl = SPEC.level_of(r["title"])   # /search filters on this (default entry+mid)
+        # Senior rows are new to the index; board queries return recruiter/PM noise
+        # at that level, so keep only cyber/IT titles there.
+        if lvl == "senior" and not (SPEC.tech_title(r["title"]) or SPEC.is_cyber_title(r["title"])):
+            continue
         items.append({
             "t": r["title"], "c": r["company"], "u": u, "lvl": lvl,
             "loc": r.get("location", ""), "st": _loc_state(r.get("location", "")),
