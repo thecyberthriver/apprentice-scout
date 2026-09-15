@@ -97,7 +97,7 @@ BASE_DIR = Path(__file__).resolve().parent
 SEEN_FILE = BASE_DIR / "seen.json"
 LOG_FILE = BASE_DIR / "apprentice_scout.log"
 INDEX_FILE = BASE_DIR / "roles_index.json"   # searchable role index for the webhook
-INDEX_MAX = 800                              # cap roles kept in the index
+INDEX_MAX = 2500                             # cap roles kept in the index (800 truncated the ATS pull; ~0.4KB/row)
 
 # Load secrets (untracked) — overrides the CHANGE-ME placeholders above.
 try:
