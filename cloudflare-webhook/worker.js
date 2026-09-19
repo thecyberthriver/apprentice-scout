@@ -163,6 +163,87 @@ async function searchBlocks(arg) {
   return chunk(lines);
 }
 
+
+// ---------------------------------------------------------------------------
+// /bool — recruiter BOOLEAN search over EMPLOYER ATS rows only (Greenhouse,
+// Lever, Ashby, SmartRecruiters, Workday). No LinkedIn/Indeed rows, no
+// aggregators. Workers can't eval, so the string is parsed, not compiled.
+// ---------------------------------------------------------------------------
+const ATS_SRC = new Set(["greenhouse", "lever", "ashby", "smartrecruiters", "workday"]);
+
+export function parseBool(query) {
+  const toks = String(query).match(/"[^"]*"|\(|\)|[^\s()]+/g) || [];
+  let i = 0;
+  const peek = () => toks[i];
+  const stop = (t) => !t || t === ")" || /^OR$/i.test(t);
+
+  function unary() {
+    if (peek() && /^NOT$/i.test(peek())) { i++; const r = unary(); return (s) => !r(s); }
+    if (peek() === "(") { i++; const r = or(); if (peek() === ")") i++; return r; }
+    const term = (toks[i++] || "").replace(/^"|"$/g, "").trim().toLowerCase();
+    return term ? (s) => s.includes(term) : () => true;
+  }
+  function and() {
+    let l = unary();
+    for (;;) {
+      let t = peek();
+      if (stop(t)) break;
+      if (/^AND$/i.test(t)) { i++; if (stop(peek())) break; }
+      const r = unary(), a = l;
+      l = (s) => a(s) && r(s);
+    }
+    return l;
+  }
+  function or() {
+    let l = and();
+    while (peek() && /^OR$/i.test(peek())) { i++; const r = and(), a = l; l = (s) => a(s) || r(s); }
+    return l;
+  }
+  const f = or();
+  return (s) => f(String(s).toLowerCase());
+}
+
+async function boolBlocks(query) {
+  if (!query) {
+    return ["🔠 <b>/bool</b> — boolean search across employer ATS boards only.\n\n" +
+      "<code>/bool (soc OR siem OR \"incident response\") AND (analyst OR engineer) NOT senior</code>\n\n" +
+      "Supports <code>AND</code> <code>OR</code> <code>NOT</code>, parentheses and " +
+      "<code>\"quoted phrases\"</code>; terms match title, company, location and level " +
+      "(so <code>entry</code>, <code>mid</code>, <code>senior</code>, <code>NY</code> all work as terms)."];
+  }
+  const idx = await getIndex();
+  if (!idx.roles.length) return ["🔠 The role index isn't available right now — try again shortly."];
+  const match = parseBool(query);
+  const cutoff = Date.now() - MAX_AGE_MS;
+  const built = Date.parse(idx.generated || "") || Date.now();
+  const hits = idx.roles.filter((r) =>
+    ATS_SRC.has((r.src || "").toLowerCase()) &&
+    (r.posted ? Date.parse(r.posted) : built) >= cutoff &&
+    // Title + company + location + level ONLY. Deliberately not r.kw: its tag
+    // text says "Entry-level" on every ATS row, so `entry` there matched mids.
+    match(`${r.t || ""} ${r.c || ""} ${r.loc || ""} ${r.st || ""} ${r.lvl || ""}`)
+  ).slice(0, MAX_RESULTS);
+
+  const atsTotal = idx.roles.filter((r) => ATS_SRC.has((r.src || "").toLowerCase())).length;
+  if (!hits.length) {
+    return [`🔠 <b>ATS boolean search</b> — no match in ${atsTotal} employer-ATS roles ` +
+      `(index ${esc((idx.generated || "").slice(0, 16))} UTC).
+<code>${esc(query)}</code>
+
+` +
+      "Widen the string (more <code>OR</code>s) or drop a <code>NOT</code>."];
+  }
+  const lines = [
+    `🔠 <b>ATS boolean search</b> — ${hits.length} of ${atsTotal} employer-ATS roles:`,
+    `<code>${esc(query)}</code>`,
+    `<i>Greenhouse · Lever · Ashby · SmartRecruiters · Workday only — the employer's own ` +
+    `posting, no aggregators. Index ${esc((idx.generated || "").slice(0, 16))} UTC.</i>`,
+    "",
+  ];
+  lines.push(...roleLines(hits));
+  return chunk(lines);
+}
+
 const HELP =
   "🎬 <b>Apprentice Scout — search</b>\n" +
   "Type a keyword and/or a state; I return real roles with links straight to the posting.\n\n" +
@@ -170,6 +251,7 @@ const HELP =
   "• <code>/search help desk texas</code>\n" +
   "• <code>/search security engineer</code> — keyword, any state\n" +
   "• <code>/search NY</code> or just <code>NY</code> — a whole state\n" +
+  "• <code>/bool (soc OR siem) AND analyst NOT senior</code> — boolean, employer ATS only\n" +
   "• <code>/states</code> — list state codes · <code>/help</code> — this message\n\n" +
   "<i>Roles come from job boards + employer/ATS career pages, refreshed a few times a day.</i>";
 
@@ -222,6 +304,11 @@ async function handleUpdate(env, update) {
   if (["/states", "states"].includes(low)) {
     await tgSend(env, chatId, `🗺️ <b>State codes</b>\n${esc(Object.keys(STATES).sort().join(" "))}\n\n` +
       "e.g. <code>/search soc analyst TX</code>, or just <code>TX</code>.");
+    return;
+  }
+
+  if (low.startsWith("/bool")) {
+    for (const block of await boolBlocks(t.replace(/^\/bool\b/i, "").trim())) await tgSend(env, chatId, block);
     return;
   }
 
