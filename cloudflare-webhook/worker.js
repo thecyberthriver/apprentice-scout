@@ -203,44 +203,100 @@ export function parseBool(query) {
   return (s) => f(String(s).toLowerCase());
 }
 
-async function boolBlocks(query) {
-  if (!query) {
-    return ["🔠 <b>/bool</b> — boolean search across employer ATS boards only.\n\n" +
-      "<code>/bool (soc OR siem OR \"incident response\") AND (analyst OR engineer) NOT senior</code>\n\n" +
+// The eight CISSP domains, as searchspec.CYBER_DOMAINS tags them on every role
+// ("🔐 D7 SecOps · …"). /d1…/d8 filter the ATS pool on that badge.
+const DOMAINS = {
+  1: "Risk & GRC", 2: "Asset/Data", 3: "Sec Eng/Arch", 4: "Network Sec",
+  5: "IAM", 6: "Assess/Pentest", 7: "SecOps", 8: "AppSec",
+};
+const LEVELS = ["entry", "mid", "senior"];
+
+// Pull leading level words off a command argument: "/d7 entry mid soc" →
+// levels {entry,mid}, rest "soc". No level word = every level (entry→senior).
+export function splitLevels(arg) {
+  const words = (arg || "").trim().split(/\s+/).filter(Boolean);
+  const levels = new Set();
+  while (words.length) {
+    const w = words[0].toLowerCase().replace(/[-_]?level$/, "");
+    if (w === "all") { words.shift(); levels.clear(); break; }
+    const hit = { entry: "entry", junior: "entry", jr: "entry", mid: "mid",
+                  intermediate: "mid", senior: "senior", sr: "senior" }[w];
+    if (!hit) break;
+    levels.add(hit);
+    words.shift();
+  }
+  return { levels: levels.size ? levels : null, rest: words.join(" ") };
+}
+
+// opts: { levels: Set|null, domain: 1-8|null, cmd: label for the usage text }
+export async function boolBlocks(query, { levels = null, domain = null, cmd = "/bool" } = {}) {
+  const scope = levels ? [...LEVELS].filter((l) => levels.has(l)).join("+") : "entry→senior";
+  const dom = domain ? `D${domain} ${DOMAINS[domain]}` : "";
+  if (!query && !domain) {
+    return [`🔠 <b>${cmd}</b> — boolean search across employer ATS boards only (${esc(scope)}).\n\n` +
+      `<code>${cmd} (soc OR siem OR "incident response") AND (analyst OR engineer)</code>\n\n` +
       "Supports <code>AND</code> <code>OR</code> <code>NOT</code>, parentheses and " +
       "<code>\"quoted phrases\"</code>; terms match title, company, location and level " +
-      "(so <code>entry</code>, <code>mid</code>, <code>senior</code>, <code>NY</code> all work as terms)."];
+      "(so <code>NY</code> works as a term, and on <code>/bool</code> so do " +
+      "<code>entry</code>, <code>mid</code>, <code>senior</code>).\n\n" +
+      "<code>/domains</code> — the same search by CISSP domain."];
   }
   const idx = await getIndex();
   if (!idx.roles.length) return ["🔠 The role index isn't available right now — try again shortly."];
-  const match = parseBool(query);
+  const match = query ? parseBool(query) : () => true;
   const cutoff = Date.now() - MAX_AGE_MS;
   const built = Date.parse(idx.generated || "") || Date.now();
-  const hits = idx.roles.filter((r) =>
+  const pool = idx.roles.filter((r) =>
     ATS_SRC.has((r.src || "").toLowerCase()) &&
+    (!levels || levels.has(r.lvl || "mid")) &&
+    (!domain || new RegExp(`\\bD${domain}\\b`).test(r.tag || "")));
+  const hits = pool.filter((r) =>
     (r.posted ? Date.parse(r.posted) : built) >= cutoff &&
     // Title + company + location + level ONLY. Deliberately not r.kw: its tag
     // text says "Entry-level" on every ATS row, so `entry` there matched mids.
     match(`${r.t || ""} ${r.c || ""} ${r.loc || ""} ${r.st || ""} ${r.lvl || ""}`)
   ).slice(0, MAX_RESULTS);
 
-  const atsTotal = idx.roles.filter((r) => ATS_SRC.has((r.src || "").toLowerCase())).length;
+  const atsTotal = pool.length;
+  const what = [dom, scope].filter(Boolean).join(" · ");
   if (!hits.length) {
-    return [`🔠 <b>ATS boolean search</b> — no match in ${atsTotal} employer-ATS roles ` +
-      `(index ${esc((idx.generated || "").slice(0, 16))} UTC).
-<code>${esc(query)}</code>
-
-` +
-      "Widen the string (more <code>OR</code>s) or drop a <code>NOT</code>."];
+    return [`🔠 <b>ATS boolean search — ${esc(what)}</b> — no match in ${atsTotal} employer-ATS ` +
+      `roles (index ${esc((idx.generated || "").slice(0, 16))} UTC).\n` +
+      (query ? `<code>${esc(query)}</code>\n\n` : "\n") +
+      "Widen the string (more <code>OR</code>s), drop a <code>NOT</code>, or open the level " +
+      "up (<code>all</code>)."];
   }
   const lines = [
-    `🔠 <b>ATS boolean search</b> — ${hits.length} of ${atsTotal} employer-ATS roles:`,
-    `<code>${esc(query)}</code>`,
+    `🔠 <b>ATS boolean search — ${esc(what)}</b> — ${hits.length} of ${atsTotal} employer-ATS roles:`,
+    ...(query ? [`<code>${esc(query)}</code>`] : []),
     `<i>Greenhouse · Lever · Ashby · SmartRecruiters · Workday only — the employer's own ` +
     `posting, no aggregators. Index ${esc((idx.generated || "").slice(0, 16))} UTC.</i>`,
     "",
   ];
   lines.push(...roleLines(hits));
+  return chunk(lines);
+}
+
+// /domains — what's actually on the employer ATS boards right now, by CISSP
+// domain and level, with the command to open each one.
+export async function domainsBlocks() {
+  const idx = await getIndex();
+  const pool = idx.roles.filter((r) => ATS_SRC.has((r.src || "").toLowerCase()));
+  const lines = [
+    "🔐 <b>The eight CISSP domains — employer ATS roles</b>",
+    `<i>entry / mid / senior · ${pool.length} roles · index ${esc((idx.generated || "").slice(0, 16))} UTC.</i>`,
+    "",
+  ];
+  for (const n of Object.keys(DOMAINS)) {
+    const rx = new RegExp(`\\bD${n}\\b`);
+    const rows = pool.filter((r) => rx.test(r.tag || ""));
+    const counts = LEVELS.map((l) => rows.filter((r) => (r.lvl || "mid") === l).length);
+    lines.push(`<code>/d${n}</code> <b>D${n} ${esc(DOMAINS[n])}</b> — ${counts.join(" / ")}`);
+  }
+  lines.push("");
+  lines.push("<code>/d7</code> every level · <code>/d7 entry</code> · <code>/d3 senior</code> · " +
+    "<code>/d5 mid senior</code>");
+  lines.push("Add a boolean string to narrow: <code>/d7 entry (remote OR ny) NOT clearance</code>");
   return chunk(lines);
 }
 
@@ -251,7 +307,10 @@ const HELP =
   "• <code>/search help desk texas</code>\n" +
   "• <code>/search security engineer</code> — keyword, any state\n" +
   "• <code>/search NY</code> or just <code>NY</code> — a whole state\n" +
-  "• <code>/bool (soc OR siem) AND analyst NOT senior</code> — boolean, employer ATS only\n" +
+  "• <code>/bool (soc OR siem) AND analyst</code> — boolean, employer ATS only, every level\n" +
+  "• <code>/boolsr …</code> — same string, mid + senior only\n" +
+  "• <code>/domains</code> — the eight CISSP domains, then <code>/d7</code>, " +
+  "<code>/d7 entry</code>, <code>/d3 senior</code>\n" +
   "• <code>/states</code> — list state codes · <code>/help</code> — this message\n\n" +
   "<i>Roles come from job boards + employer/ATS career pages, refreshed a few times a day.</i>";
 
@@ -307,8 +366,30 @@ async function handleUpdate(env, update) {
     return;
   }
 
+  if (["/domains", "domains"].includes(low)) {
+    for (const block of await domainsBlocks()) await tgSend(env, chatId, block);
+    return;
+  }
+
+  // /boolsr first — /bool is a prefix of it.
+  if (low.startsWith("/boolsr")) {
+    const blocks = await boolBlocks(t.replace(/^\/boolsr\b/i, "").trim(),
+      { levels: new Set(["mid", "senior"]), cmd: "/boolsr" });
+    for (const block of blocks) await tgSend(env, chatId, block);
+    return;
+  }
+
   if (low.startsWith("/bool")) {
     for (const block of await boolBlocks(t.replace(/^\/bool\b/i, "").trim())) await tgSend(env, chatId, block);
+    return;
+  }
+
+  // /d1 … /d8 — one CISSP domain, optional leading level words, optional string.
+  const dm = /^\/d([1-8])\b/i.exec(t);
+  if (dm) {
+    const { levels, rest } = splitLevels(t.slice(dm[0].length));
+    const blocks = await boolBlocks(rest, { levels, domain: Number(dm[1]), cmd: dm[0].toLowerCase() });
+    for (const block of blocks) await tgSend(env, chatId, block);
     return;
   }
 

@@ -9,7 +9,12 @@ is the employer's own posting on its own ATS.
   python boolsearch.py                                   # default entry-level cyber string, print
   python boolsearch.py --send                            # ...and post it to Telegram
   python boolsearch.py "(soc OR siem) AND analyst NOT senior" --days 21 --send
-  python boolsearch.py --level entry,mid --selfcheck
+  python boolsearch.py --level mid,senior --days 30      # mid -> senior
+  python boolsearch.py --domain 7 --level entry,mid,senior   # one CISSP domain, every level
+  python boolsearch.py --selfcheck
+
+The bot mirrors this: /bool <string>, /boolsr <string> (mid+senior), /domains,
+and /d1…/d8 [entry|mid|senior] [string] — see cloudflare-webhook/worker.js.
 """
 
 from __future__ import annotations
@@ -57,12 +62,16 @@ def compile_query(query: str):
     return lambda s: eval(expr, {"__builtins__": {}}, {"T": terms, "s": s.lower()})  # noqa: S307
 
 
-def search(query: str, days: int, levels: tuple[str, ...], cyber_only: bool) -> list[dict]:
+def search(query: str, days: int, levels: tuple[str, ...], cyber_only: bool,
+           domain: str = "") -> list[dict]:
+    """`domain` = a CISSP domain number 1-8 (searchspec.CYBER_DOMAINS), "" = all."""
     match = compile_query(query)
     roles = ats.scrape_ats(days=days, log=lambda m: print(m, file=sys.stderr), levels=levels)
     hits, seen = [], set()
     for r in roles:
         if cyber_only and not SPEC.is_cyber_title(r["title"]):
+            continue
+        if domain and not (SPEC.cyber_domain(r["title"]) or "").startswith(f"D{domain}"):
             continue
         if not match(f"{r['title']} {r['company']} {r.get('location', '')}"):
             continue
@@ -75,9 +84,10 @@ def search(query: str, days: int, levels: tuple[str, ...], cyber_only: bool) -> 
     return hits
 
 
-def format_hits(hits: list[dict], query: str, days: int, levels) -> str:
+def format_hits(hits: list[dict], query: str, days: int, levels, domain: str = "") -> str:
     from apprentice_scout import esc
-    lines = [f"🔐 <b>ATS boolean search — {len(hits)} role(s)</b>",
+    dom = next((d for d in SPEC.CYBER_DOMAINS if d.startswith(f"D{domain}")), "") if domain else ""
+    lines = [f"🔐 <b>ATS boolean search{f' — {esc(dom)}' if dom else ''} — {len(hits)} role(s)</b>",
              f"<i>Employer ATS only (Greenhouse · Lever · Ashby · SmartRecruiters · "
              f"Workday) · last {days}d · level: {'+'.join(levels)}</i>",
              "", f"<code>{esc(query)}</code>", ""]
@@ -103,6 +113,11 @@ def _selfcheck() -> None:
     assert not m("Data Analyst")          # soc/siem required
     assert compile_query('"incident response"')("Incident Response Intern")
     assert not compile_query('"incident response"')("Incident Intern Response")
+    assert compile_query("")("anything")            # no string + --domain N = domain only
+    # --domain N leans on searchspec's CISSP map; check the two ends of it.
+    assert (SPEC.cyber_domain("SOC Analyst") or "").startswith("D7")
+    assert (SPEC.cyber_domain("Application Security Engineer") or "").startswith("D8")
+    assert len(SPEC.CYBER_DOMAINS) == 8
     print("selfcheck ok")
 
 
@@ -117,11 +132,13 @@ def main() -> int:
         return 0
     days = int(opt("--days", 14))
     levels = tuple(opt("--level", "entry").split(","))
+    domain = str(opt("--domain", "")).lstrip("dD")   # --domain 7  or  --domain d7
     positional = [a for i, a in enumerate(argv)
                   if not a.startswith("--") and (i == 0 or not argv[i - 1].startswith("--"))]
-    query = positional[0] if positional else DEFAULT_QUERY
-    hits = search(query, days, levels, cyber_only="--all-tech" not in argv)
-    text = format_hits(hits, query, days, levels)
+    # With a domain, the domain IS the filter — an empty string matches everything.
+    query = positional[0] if positional else ("" if domain else DEFAULT_QUERY)
+    hits = search(query, days, levels, cyber_only="--all-tech" not in argv, domain=domain)
+    text = format_hits(hits, query, days, levels, domain)
     print(re.sub(r"<[^>]+>", "", text))
     if "--send" in argv:
         from apprentice_scout import send_message

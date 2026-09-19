@@ -33,6 +33,16 @@ and posts a Telegram digest you can screen-record and narrate.
   time and it live-scrapes that state and replies with ranked roles. Also
   `/states` and `/help`. Answered in the cloud by `responder.yml` (polls every
   ~5 min via `--serve-once`), so it works even when your PC is off.
+- **Boolean search over employer ATS boards only** — recruiter strings
+  (`AND` / `OR` / `NOT`, parentheses, `"quoted phrases"`) against Greenhouse,
+  Lever, Ashby, SmartRecruiters and Workday postings; LinkedIn/Indeed rows are
+  excluded, so every hit is the employer's own posting. In the bot:
+  `/bool (soc OR siem) AND analyst` (every level), `/boolsr …` (mid + senior),
+  `/domains` (the eight CISSP domains with entry/mid/senior counts), then
+  `/d7`, `/d7 entry`, `/d3 senior`, `/d5 mid senior` — each takes an optional
+  string, e.g. `/d7 entry (remote OR ny) NOT clearance`. Answered instantly from
+  the role index by the Worker. On the CLI, `boolsearch.py` does the same against
+  a live ATS scrape (`--level mid,senior`, `--domain 7`, `--send`).
 - **A draft TikTok script + caption** (optional, via Claude Haiku).
 - **A posting tip** and a **teach-your-audience tip** so the video educates.
 - **Browse-more links** — pre-filtered live searches on hiring.cafe,

@@ -20,3 +20,17 @@ assert(parseBool("")("anything"));                                     // empty 
 assert(parseBool("a OR b AND c")("a"));                                // AND binds tighter
 assert(!parseBool("a OR b AND c")("b"));
 console.log("bool parser ok");
+
+// --- /d1…/d8 level prefix -------------------------------------------------
+import { splitLevels } from "./worker.js";
+const lv = (s) => { const { levels, rest } = splitLevels(s); return [levels && [...levels].sort().join("+"), rest]; };
+
+assert.deepEqual(lv(" entry"), ["entry", ""]);
+assert.deepEqual(lv("mid senior soc OR siem"), ["mid+senior", "soc OR siem"]);
+assert.deepEqual(lv("sr"), ["senior", ""]);
+assert.deepEqual(lv("entry-level analyst"), ["entry", "analyst"]);
+assert.deepEqual(lv(""), [null, ""]);                 // no level word = entry→senior
+assert.deepEqual(lv("(remote OR ny)"), [null, "(remote OR ny)"]);
+assert.deepEqual(lv("all entry"), [null, "entry"]);   // 'all' wins, rest is a term
+assert.deepEqual(lv("senior NOT clearance"), ["senior", "NOT clearance"]);
+console.log("level prefix ok");
