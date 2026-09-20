@@ -347,9 +347,30 @@ async function tailor(env, chatId, arg) {
     : `⚠️ GitHub refused the dispatch (HTTP ${r.status}). Check the GITHUB_DISPATCH_TOKEN secret.`);
 }
 
-async function handleUpdate(env, update) {
+// Telegram re-delivers an update if a webhook reply is slow or lost, and the
+// same isolate can therefore see one update_id twice. Answering twice looks
+// broken to the reader, so remember the recent ones. In-isolate only: a cold
+// isolate starting empty at worst re-answers one command, which is the same
+// behaviour as before this guard.
+const SEEN_UPDATES = new Set();
+const SEEN_UPDATES_MAX = 500;
+
+export function seenUpdate(id) {
+  if (id === undefined || id === null) return false;
+  if (SEEN_UPDATES.has(id)) return true;
+  SEEN_UPDATES.add(id);
+  if (SEEN_UPDATES.size > SEEN_UPDATES_MAX) {
+    SEEN_UPDATES.delete(SEEN_UPDATES.values().next().value);   // oldest out
+  }
+  return false;
+}
+
+export function _resetSeenUpdates() { SEEN_UPDATES.clear(); }   // tests only
+
+export async function handleUpdate(env, update) {
   const msg = update.message || update.edited_message;
   if (!msg || !msg.text || !msg.chat) return;
+  if (seenUpdate(update.update_id)) return;      // duplicate delivery, already answered
   const chatId = msg.chat.id;
   if (env.OWNER_CHAT_ID && String(chatId) !== String(env.OWNER_CHAT_ID)) return;
 

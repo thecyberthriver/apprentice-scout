@@ -77,13 +77,49 @@ pip install -r requirements.txt          # python-jobspy, requests, anthropic
    python apprentice_scout.py                       # real Telegram send
    python apprentice_scout.py --preview --state TX  # scope the scrape to one state
    ```
-4. Schedule it — two options:
-   - **Cloud (default, recommended):** GitHub Actions runs it Mon + Thu at 12:00
-     UTC (8 AM ET) — see `.github/workflows/schedule.yml`. Set repo Secrets
-     `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (and optionally `ANTHROPIC_API_KEY`).
-     Trigger a test run from the Actions tab or `gh workflow run schedule.yml`.
-   - **Local (Windows):** `.\register_task.ps1` (Task Scheduler, silent via
-     pythonw). Don't run both — they de-dupe independently and would double-post.
+4. Schedule it — **the cloud is production**: GitHub Actions runs the digest Mon +
+   Thu at 12:00 UTC (8 AM ET), `.github/workflows/schedule.yml`. Set repo Secrets
+   `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID` (and optionally `ANTHROPIC_API_KEY`).
+   Trigger a test run from the Actions tab or `gh workflow run schedule.yml`.
+   `register_task.ps1` (Windows Task Scheduler) exists for **local development
+   only** — nothing in production needs your PC, and running both would
+   double-post, since the two de-dupe against separate caches.
+
+## Architecture — nothing here needs your computer
+
+| Piece | Where it runs | What it does | State it keeps |
+|---|---|---|---|
+| `schedule.yml` | GitHub Actions, Mon + Thu 12:00 UTC | scrapes and sends the digest | commits `seen.json` back to the repo |
+| `index.yml` | GitHub Actions, every 2h | rebuilds `roles_index.json` | commits the index back to the repo |
+| `cloudflare-webhook/worker.js` | Cloudflare Worker (webhook) | answers `/search`, `/states`, `/help`, `/bool`, `/boolsr`, `/domains`, `/d1`–`/d8` instantly | none — reads `roles_index.json` from the repo, caches it 30 min in-isolate |
+| `responder.yml` | GitHub Actions, **disabled** | `getUpdates` fallback poller | `poll_offset.json` via `actions/cache` |
+| `register_task.ps1` | your PC, optional | local dev runs | local files |
+
+**One receiver per bot.** The Cloudflare webhook owns this bot's updates, so
+`responder.yml`'s cron is commented out — a bot cannot use a webhook and
+`getUpdates` at once (`getUpdates` returns HTTP 409 while a webhook is set). To
+switch to polling instead: run `python cloudflare-webhook/set_webhook.py --delete`
+**first**, then un-comment the `schedule:` block in `responder.yml`.
+
+**State.** A Actions runner is wiped between runs, so nothing durable lives on
+it: `seen.json` (de-dupe) and `roles_index.json` (what the Worker serves) are
+committed back to the repo by the workflow that writes them, and the poll offset
+uses `actions/cache` (evictable — losing it can only re-answer one command).
+
+**Secrets** live in GitHub Actions repo secrets and Cloudflare Worker secrets.
+None are committed, and every log line goes through `redact()` before it is
+written, because the Bot API puts the token in the URL that `requests` embeds in
+exception messages — and this repo's Actions logs are public.
+
+### Tests (no network, no Telegram, no scrape)
+
+```powershell
+python test_delivery.py                    # delivery failures, seen-cache, polling, state
+python searchspec.py                       # query/title classifier self-check
+python boolsearch.py --selfcheck           # boolean CLI
+node cloudflare-webhook/worker.test.mjs    # webhook command handling + duplicate updates
+node cloudflare-webhook/bool.test.mjs      # boolean parser (Workers can't eval)
+```
 
 ## Tuning (all in `searchspec.py` / the CONFIG block of `apprentice_scout.py`)
 

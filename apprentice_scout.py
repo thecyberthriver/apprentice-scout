@@ -231,6 +231,17 @@ def _loc_state(loc: str) -> str:
 # Scraping (jobspy) + filtering / scoring
 # ---------------------------------------------------------------------------
 
+# A scrape that returns nothing because every board errored is NOT the same as a
+# quiet week, and the digest must never claim otherwise. Populated per run.
+SOURCE_FAILURES: list[str] = []
+SOURCE_OK: list[str] = []
+
+
+def sources_all_failed() -> bool:
+    """True when every source we tried errored — i.e. we know nothing this run."""
+    return bool(SOURCE_FAILURES) and not SOURCE_OK
+
+
 def scrape_all(location: str | None = None, results_per_query: int | None = None) -> list[dict]:
     """Run every query in searchspec across the configured boards. Each pass is
     isolated so one board/query failing (rate limit, network) never kills the
@@ -271,8 +282,10 @@ def scrape_all(location: str | None = None, results_per_query: int | None = None
                 verbose=0,
             )
         except Exception as e:  # noqa: BLE001
-            log(f"WARN query '{q['tag']}' failed: {e}")
+            SOURCE_FAILURES.append(f"{q['tag']}: {type(e).__name__}")
+            log(f"WARN query '{q['tag']}' failed: {redact(e)}")
             continue
+        SOURCE_OK.append(q["tag"])
 
         if df is None or len(df) == 0:
             continue
@@ -485,7 +498,7 @@ def draft_script(picks: list[dict], count: int) -> dict | None:
             "caption": str(data.get("caption", "")).strip(),
         }
     except Exception as e:  # noqa: BLE001
-        log(f"WARN claude script failed: {e}")
+        log(f"WARN claude script failed: {redact(e)}")
         return None
 
 
@@ -501,28 +514,86 @@ def _tg_api(method: str) -> str:
     return f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
 
 
+def redact(s) -> str:
+    """Telegram puts the bot token in every API URL, and requests puts the URL in
+    every exception message — so anything logged must go through here first.
+    Actions logs on a public repo are readable by anyone who can read the repo."""
+    out = str(s)
+    for secret in (TELEGRAM_BOT_TOKEN, ANTHROPIC_API_KEY):
+        if secret and len(secret) > 8 and "CHANGE-ME" not in secret:
+            out = out.replace(secret, "<redacted>")
+    # Belt and braces: a token embedded in an api.telegram.org URL, even one we
+    # somehow did not hold in a variable.
+    return re.sub(r"(api\.telegram\.org/bot)[^/\s]+", r"\1<redacted>", out)
+
+
+# Telegram statuses that will never succeed on retry: the recipient blocked the
+# bot, deleted the chat, or the token/chat id is wrong. Retrying is pointless.
+_PERMANENT_STATUSES = (400, 401, 403, 404)
+_SEND_ATTEMPTS = 3          # bounded: one try plus two retries, never infinite
+
+
+def _tg_post(method: str, payload: dict, timeout: int = 25) -> tuple[bool, int, str]:
+    """POST to the Bot API once. Returns (ok, http_status, description).
+    status 0 = the request never got an HTTP response (timeout, DNS, reset)."""
+    try:
+        resp = requests.post(_tg_api(method), json=payload, timeout=timeout)
+    except Exception as e:  # noqa: BLE001  — network layer, no response at all
+        return False, 0, redact(f"{type(e).__name__}: {e}")
+    if resp.status_code == 200:
+        return True, 200, ""
+    try:
+        desc = str(resp.json().get("description") or "")
+    except ValueError:
+        desc = resp.text[:200]
+    return False, resp.status_code, redact(desc)
+
+
+def _send_part(part: str) -> bool:
+    """One message part, with bounded retries. Permanent failures stop at once."""
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": part, "parse_mode": "HTML",
+               "disable_web_page_preview": True}
+    for attempt in range(1, _SEND_ATTEMPTS + 1):
+        ok, status, desc = _tg_post("sendMessage", payload)
+        if ok:
+            return True
+        if status in _PERMANENT_STATUSES:
+            log(f"ERROR telegram send REJECTED (HTTP {status}): {desc} — "
+                "permanent, not retrying. Check the chat id, or whether the bot "
+                "was blocked / the chat deleted.")
+            return False
+        wait = 2 * attempt
+        if status == 429:                      # rate limited — obey retry_after
+            m = re.search(r"retry after (\d+)", desc, re.I)
+            wait = int(m.group(1)) if m else wait
+        if attempt == _SEND_ATTEMPTS:
+            log(f"ERROR telegram send FAILED (HTTP {status}): {desc} — "
+                f"gave up after {_SEND_ATTEMPTS} attempts.")
+            return False
+        log(f"WARN telegram send failed (HTTP {status}): {desc} — "
+            f"retry {attempt}/{_SEND_ATTEMPTS - 1} in {wait}s")
+        time.sleep(wait)
+    return False
+
+
 def send_message(text: str) -> bool:
     """Send `text` to Telegram, split into <4096-char parts (Telegram's cap) on
-    line boundaries so HTML tags stay whole. Returns True only if every part sent."""
+    line boundaries so HTML tags stay whole.
+
+    Returns True ONLY if every part was accepted by Telegram. A False here means
+    the reader did not get the digest — callers must not log it as SENT and must
+    not write the seen-cache, or the roles would be silently skipped forever."""
     if "CHANGE-ME" in TELEGRAM_BOT_TOKEN or "CHANGE-ME" in TELEGRAM_CHAT_ID:
-        log("ERROR TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID still placeholder — edit secrets_local.py.")
+        log("ERROR TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID still placeholder — "
+            "set the repo secrets (cloud) or edit secrets_local.py (local).")
         return False
-    ok = True
-    for part in _chunk_lines(text.split("\n")):
-        try:
-            resp = requests.post(
-                _tg_api("sendMessage"),
-                json={"chat_id": TELEGRAM_CHAT_ID, "text": part, "parse_mode": "HTML",
-                      "disable_web_page_preview": True},
-                timeout=25,
-            )
-            resp.raise_for_status()
-        except Exception as e:  # noqa: BLE001
-            body = getattr(getattr(e, "response", None), "text", "")
-            log(f"WARN telegram send failed: {e} {body}")
-            ok = False
+    parts = _chunk_lines(text.split("\n"))
+    for i, part in enumerate(parts, 1):
+        if not _send_part(part):
+            log(f"ERROR delivery incomplete: part {i} of {len(parts)} did not send.")
+            return False
         time.sleep(0.3)
-    return ok
+    return True
 
 
 def _role_lines(picks: list[dict], tag_key: str) -> list[str]:
@@ -605,13 +676,27 @@ def build_digest(picks: list[dict], transition: list[dict], ats_roles: list[dict
 
 
 def build_empty_message() -> str:
-    return (
-        "🎬 <b>Paid Apprenticeships &amp; Early-Career Cyber/Tech — TikTok brief</b>\n"
-        f"📅 {esc(date.today().strftime('%a %b %d'))}\n\n"
-        "No fresh qualifying roles cleared the filter this run (boards may be "
-        "rate-limiting, or nothing new in the last 7 days). Try re-running later, "
-        "or loosen MIN_SCORE / add a board in the config."
-    )
+    head = ("🎬 <b>Paid Apprenticeships &amp; Early-Career Cyber/Tech — TikTok brief</b>\n"
+            f"📅 {esc(date.today().strftime('%a %b %d'))}\n\n")
+    if sources_all_failed():
+        # Say what actually happened. "No roles" here would be a lie: we never
+        # got an answer from a single source.
+        return (head +
+                "⚠️ <b>No results — every source failed this run.</b>\n"
+                f"Sources tried and errored: {esc(', '.join(SOURCE_FAILURES[:6]))}"
+                f"{' …' if len(SOURCE_FAILURES) > 6 else ''}\n\n"
+                "This is a scrape failure, not a quiet week — nothing was filtered "
+                "out. The boards are likely rate-limiting; the next scheduled run "
+                "should recover.")
+    tail = ""
+    if SOURCE_FAILURES:
+        tail = ("\n\n⚠️ Partial run: "
+                f"{len(SOURCE_FAILURES)} of {len(SOURCE_FAILURES) + len(SOURCE_OK)} "
+                "sources errored, so this may be an undercount.")
+    return (head +
+            "No fresh qualifying roles cleared the filter this run (nothing new in "
+            "the last 7 days). Try re-running later, or loosen MIN_SCORE / add a "
+            "board in the config." + tail)
 
 
 # ---------------------------------------------------------------------------
@@ -632,8 +717,10 @@ def gather_ats(recent_keys) -> list[dict]:
     try:
         roles = ats.scrape_ats(days=ATS_DAYS, log=log)
     except Exception as e:  # noqa: BLE001
-        log(f"WARN ATS scrape failed: {e}")
+        SOURCE_FAILURES.append(f"ats: {type(e).__name__}")
+        log(f"WARN ATS scrape failed: {redact(e)}")
         return []
+    SOURCE_OK.append("ats")
     if STATE:
         roles = [r for r in roles if _in_state(r["location"], STATE)]
     seen_keys, out = set(), []
@@ -651,9 +738,14 @@ def main() -> int:
     picks, transition, seen = _gather()
     ats_roles = gather_ats(seen.get("role_keys", {}))
     if not picks and not transition and not ats_roles:
-        log("No qualifying roles this run.")
-        send_message(build_empty_message())
-        return 0
+        failed = sources_all_failed()
+        log("Every source failed this run — reporting a scrape failure, not an "
+            f"empty week: {SOURCE_FAILURES}" if failed else "No qualifying roles this run.")
+        # A failed "nothing today" note is still a failed delivery — the run must
+        # go red so it is visible in Actions, not pass quietly.
+        if not send_message(build_empty_message()):
+            return 1
+        return 1 if failed else 0
 
     hook = rotate_pick(SPEC.VIDEO_HOOKS, seen.get("hook_recent", []), "hook")
     cap_tip = rotate_pick(SPEC.CAPTION_TIPS, [], "captip")
@@ -708,7 +800,8 @@ def build_index() -> int:
     try:
         roles += ats.scrape_ats(days=ATS_DAYS, log=log, levels=None)  # ATS, every level
     except Exception as e:  # noqa: BLE001
-        log(f"WARN ATS scrape failed: {e}")
+        SOURCE_FAILURES.append(f"ats: {type(e).__name__}")
+        log(f"WARN ATS scrape failed: {redact(e)}")
 
     seen, items = set(), []
     for r in roles:
@@ -767,7 +860,7 @@ def print_chat_id() -> int:
             print(f"  {cid}   (@{uname})" if uname else f"  {cid}")
         return 0
     except Exception as e:  # noqa: BLE001
-        print(f"Error calling getUpdates: {e}")
+        print(f"Error calling getUpdates: {redact(e)}")
         return 1
 
 
@@ -811,13 +904,15 @@ def _chunk_lines(lines: list[str], limit: int = 3800) -> list[str]:
     return out
 
 
-def _reply(chat_id: str, text: str) -> None:
-    try:
-        requests.post(_tg_api("sendMessage"),
-                      json={"chat_id": chat_id, "text": text, "parse_mode": "HTML",
-                            "disable_web_page_preview": True}, timeout=25).raise_for_status()
-    except Exception as e:  # noqa: BLE001
-        log(f"WARN reply failed: {e}")
+def _reply(chat_id: str, text: str) -> bool:
+    """One reply to a /search command. Returns False (and says why) when Telegram
+    refused it, so a silent non-delivery never looks like a handled command."""
+    ok, status, desc = _tg_post("sendMessage",
+                                {"chat_id": chat_id, "text": text,
+                                 "parse_mode": "HTML", "disable_web_page_preview": True})
+    if not ok:
+        log(f"ERROR reply failed (HTTP {status}): {desc}")
+    return ok
 
 
 def build_search_reply(location_label: str, location: str) -> list[str]:
@@ -924,10 +1019,26 @@ def serve_once() -> int:
         r = requests.get(_tg_api("getUpdates"),
                          params={"offset": offset, "timeout": 0, "allowed_updates": '["message"]'},
                          timeout=30)
-        r.raise_for_status()
+        if r.status_code != 200:
+            desc = ""
+            try:
+                desc = str(r.json().get("description") or "")
+            except ValueError:
+                desc = r.text[:200]
+            if r.status_code == 409:
+                # A bot cannot poll and run a webhook at once. The Cloudflare
+                # Worker owns this bot's updates, so polling is the wrong mode.
+                log(f"ERROR getUpdates HTTP 409: {redact(desc)} — a webhook is "
+                    "active for this bot (cloudflare-webhook/). Polling and a "
+                    "webhook are mutually exclusive: either keep the webhook "
+                    "(leave responder.yml's cron disabled) or run "
+                    "`python cloudflare-webhook/set_webhook.py --delete` first.")
+            else:
+                log(f"ERROR getUpdates HTTP {r.status_code}: {redact(desc)}")
+            return 1
         updates = r.json().get("result", [])
     except Exception as e:  # noqa: BLE001
-        log(f"WARN getUpdates failed: {e}")
+        log(f"ERROR getUpdates failed: {redact(f'{type(e).__name__}: {e}')}")
         return 1
 
     handled, last = 0, offset
