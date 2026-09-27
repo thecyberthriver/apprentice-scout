@@ -200,6 +200,17 @@ EXCLUDE_COMPANIES = [
     "staffing", "recruiters", "recruitment", "talent acquisition partner",
 ]
 
+
+def is_aggregator(company: str) -> bool:
+    """True if this company name is a third-party reposter, not the employer.
+
+    The single definition — call this, never re-implement the `any(x in ...)`
+    loop. It used to live inline in apprentice_scout.classify_role(), which
+    build_index() does not go through, so aggregators shipped in
+    roles_index.json and reached students via /search.
+    """
+    return any(x in (company or "").lower() for x in EXCLUDE_COMPANIES)
+
 # Seniority that disqualifies (unless an early-career signal is also present,
 # e.g. "New Grad — reports to Senior Manager").
 SENIOR_BLOCK = ["senior ", "sr.", "sr ", "staff ", "principal ", "lead ",
@@ -598,4 +609,13 @@ if __name__ == "__main__":  # self-check: python searchspec.py
         assert cyber_domain(noise) is None, noise
     assert cyber_domain("IT Risk & Compliance Analyst") == "D1 Risk & GRC"
     assert cyber_domain("Digital Forensics Analyst") == "D7 SecOps"
+    # Aggregators: these two actually shipped in roles_index.json because the
+    # check lived in classify_role, which build_index never calls.
+    for agg in ("Jobright.ai", "Motion Recruitment", "Lensa", "Jobot",
+                "Dice", "Insight Global Staffing", "Jobs via Dice"):
+        assert is_aggregator(agg), agg
+    for real in ("Cloudflare", "Datadog", "MITRE", "Booz Allen Hamilton",
+                 "Recorded Future", "JPMorgan Chase"):
+        assert not is_aggregator(real), real
+    assert not is_aggregator("") and not is_aggregator(None)
     print("searchspec self-check OK —", len(QUERIES), "queries,", len(CYBER_ROLE_TITLES), "cyber titles")

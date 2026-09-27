@@ -300,6 +300,11 @@ def scrape_all(location: str | None = None, results_per_query: int | None = None
             company = str(row.get("company") or "").strip()
             if not title or not company:
                 continue
+            # Drop third-party reposters HERE, at the one place board rows enter,
+            # not in classify_role — build_index() never calls classify_role, so
+            # aggregators used to reach roles_index.json and /search.
+            if SPEC.is_aggregator(company):
+                continue
             dedupe = url or role_key(title, company)
             if dedupe in seen_urls:
                 continue
@@ -377,9 +382,8 @@ def classify_role(role: dict) -> dict | None:
     # Hard blocks first.
     if any(b in hay for b in SPEC.UNPAID_BLOCK):
         return None
-    # Drop third-party reposters/aggregators — we want the real employer.
-    company_l = role["company"].lower()
-    if any(x in company_l for x in SPEC.EXCLUDE_COMPANIES):
+    # Belt and braces: scrape_all already drops these at the source.
+    if SPEC.is_aggregator(role["company"]):
         return None
 
     tech, _ = _kw_score(hay, SPEC.TECH_CYBER)
